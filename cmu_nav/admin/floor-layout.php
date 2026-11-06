@@ -318,7 +318,8 @@ $conn = null;
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#ffffff">
     <title><?= h($building['building_name']) ?> - Floor Layout | CMU Campus Navigator</title>
     <script src="../floor.js"></script>
     <style>
@@ -461,6 +462,130 @@ $conn = null;
         @media(prefers-reduced-motion:reduce){.floor-plan{transition:none}}
     </style>
 <link rel="stylesheet" href="../mobile.css">
+<style>
+/* ===== MOBILE APP STYLE (matches index.php) ===== */
+.bottom-nav{display:none}
+
+@media (max-width:768px){
+    :root{--nav-h:66px;--yellow:#ffd23f;--line:#e3eaf5;--ice:#edf3fc}
+
+    body{
+        background:#f6f9fe;
+        padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 12px);
+        overflow-x:hidden;
+    }
+
+    /* Compact sticky top bar */
+    .navbar{
+        position:sticky;top:0;z-index:50;min-height:0;
+        padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;
+        flex-direction:row;align-items:center;
+        box-shadow:none;border-bottom:1px solid var(--line);
+    }
+    .brand img{width:42px;height:42px}
+    .brand-text strong{font-size:17px;line-height:1.15}
+    .brand-text span{font-size:11px}
+    .nav-links{display:none}            /* replaced by bottom nav */
+
+    .container{padding:14px 14px 0;max-width:560px}
+    .back-link{margin-bottom:12px;padding:8px 14px;background:#fff;border:1px solid var(--line);border-radius:999px;font-size:13px}
+
+    /* Heading card */
+    .page-heading{
+        position:relative;margin-bottom:16px;padding:20px;border-radius:22px;
+        color:#fff;gap:10px;
+        background:linear-gradient(135deg,#0b3b82 0%,#072a5c 100%);
+        box-shadow:0 12px 26px rgba(11,59,130,.25);
+    }
+    .eyebrow{display:inline-block;padding:6px 12px;border-radius:999px;background:var(--yellow);color:#072a5c;font-size:10px}
+    .page-heading h1{color:#fff;font-size:26px;margin:12px 0 8px;line-height:1.1}
+    .page-heading p{color:#dbe6f8;font-size:13px;line-height:1.55}
+    .floor-badge{padding:8px 14px;border-radius:999px;background:var(--yellow);color:#072a5c;font-size:13px}
+
+    /* Floor selector = swipeable chips */
+    .floor-selector{
+        flex-wrap:nowrap;overflow-x:auto;gap:8px;margin:0 -14px 14px;padding:2px 14px 6px;
+        -webkit-overflow-scrolling:touch;scrollbar-width:none;
+    }
+    .floor-selector::-webkit-scrollbar{display:none}
+    .floor-selector a{flex:0 0 auto;padding:10px 18px;border-radius:999px;font-size:13px}
+    .floor-selector a.active{background:#0b3b82;border-color:#0b3b82}
+
+    /* Panels */
+    .panel{padding:16px;border-radius:20px;border:1px solid var(--line);box-shadow:0 4px 14px rgba(11,59,130,.07)}
+    .panel h2{font-size:19px}
+    .panel-description{font-size:13px}
+    .legend{gap:12px;font-size:12px}
+
+    /* Floor plan scrolls/pans inside a rounded box */
+    .layout-scroll{min-height:0;border-radius:14px}
+
+    /* Details panel */
+    .room-details-panel{padding:16px;border-radius:18px;margin-top:4px}
+    .room-details-panel.has-room{border-width:2px}
+    .detail-value{font-size:14px}
+    .back-btn,.image-link{border-radius:14px;min-height:50px}
+    .back-btn{background:var(--yellow);color:#072a5c}
+    .hallway-thumbnails,.hallway-section-gallery{grid-template-columns:1fr 1fr}
+
+    .site-footer{border:0;background:transparent;font-size:12px;padding:18px 12px 8px}
+
+    /* Bottom app navigation */
+    .bottom-nav{
+        position:fixed;left:0;right:0;bottom:0;z-index:60;
+        display:grid;grid-template-columns:repeat(4,1fr);
+        height:calc(var(--nav-h) + env(safe-area-inset-bottom,0px));
+        padding-bottom:env(safe-area-inset-bottom,0px);
+        background:#fff;border-top:1px solid var(--line);
+        box-shadow:0 -6px 18px rgba(11,59,130,.07);
+    }
+    .bottom-nav a{
+        position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:4px;font-size:11px;font-weight:700;color:#4a5b78;text-decoration:none;
+    }
+    .bottom-nav svg{width:24px;height:24px}
+    .bottom-nav a.active{color:#0b3b82}
+    .bottom-nav a.active::after{content:"";position:absolute;bottom:7px;width:22px;height:3px;border-radius:3px;background:var(--yellow)}
+}
+</style>
+<style>
+/* ===== Map fits the screen like campus-map.php ===== */
+.layout-scroll{overflow:hidden!important;touch-action:none;cursor:grab}
+.layout-scroll.dragging{cursor:grabbing}
+.floor-plan.dragging{transition:none!important}
+.floor-layout-grid{display:block!important}
+
+/* ===== Details pop-up (centered, fits the screen) ===== */
+.info-backdrop{position:fixed;top:0;right:0;bottom:0;left:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(7,26,62,.5)}
+.info-backdrop[hidden]{display:none}
+.info-backdrop .room-details-panel{position:relative!important;top:auto!important;width:100%;max-width:460px;max-height:100%;margin:0;padding:22px 18px!important;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0!important;border-radius:22px!important;background:#fff;box-shadow:0 24px 60px rgba(7,26,62,.4)!important;animation:popUp .2s ease}
+@keyframes popUp{from{opacity:0}to{opacity:1}}
+.info-close{float:right;position:sticky;top:0;z-index:5;width:36px;height:36px;margin:-6px -4px 0 8px;border:0;border-radius:50%;background:#edf3fc;color:#0b3b82;font-size:22px;line-height:1;font-weight:800;cursor:pointer}
+
+/* ===== Full-screen photo arrows: all the same size, symmetric positions ===== */
+.image-viewer.fullscreen .photo-nav-arrow{position:absolute!important;display:flex;align-items:center;justify-content:center;width:48px!important;height:48px!important;margin:0!important;padding:0!important;font-size:0!important;line-height:0;top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;transform:none!important;opacity:.7;color:#fff}
+.image-viewer.fullscreen .photo-nav-arrow svg{display:block;width:26px;height:26px;pointer-events:none}
+/* arrows grouped together as one thumb-friendly pad near the bottom of the photo */
+.image-viewer.fullscreen .photo-nav-back{left:50%!important;margin-left:-24px!important;bottom:calc(132px + env(safe-area-inset-bottom,0px))!important}
+.image-viewer.fullscreen .photo-nav-forward{left:50%!important;margin-left:-24px!important;bottom:calc(24px + env(safe-area-inset-bottom,0px))!important}
+.image-viewer.fullscreen .photo-nav-left{left:50%!important;margin-left:-78px!important;bottom:calc(78px + env(safe-area-inset-bottom,0px))!important}
+.image-viewer.fullscreen .photo-nav-right{left:50%!important;margin-left:30px!important;bottom:calc(78px + env(safe-area-inset-bottom,0px))!important}
+.image-viewer.fullscreen .photo-nav-arrow{opacity:.92;background:rgba(12,22,38,.82)!important}
+.image-viewer.fullscreen .photo-nav-caption{top:calc(18px + env(safe-area-inset-top,0px))!important;bottom:auto!important;max-width:60%}
+.image-viewer.fullscreen .photo-nav-arrow:hover{transform:scale(1.1)!important;opacity:1}
+/* ===== Info pop-up styled like campus-map.php ===== */
+.info-backdrop .details-hint,.info-backdrop #itemPlaceholder,.info-backdrop .room-selected-label,.info-backdrop .detail-item:has(#detailName){display:none!important}
+.info-backdrop .sheet-label{display:block;margin-right:40px;font-size:11px;font-weight:800;letter-spacing:.6px;color:#805900}
+.info-backdrop #detailsHeading{margin:6px 40px 14px 0;font-size:22px;line-height:1.2;color:#0b3b82;overflow-wrap:anywhere}
+.info-backdrop .image-viewport{height:210px}
+.info-backdrop .back-btn{background:#edf3fc;color:#0b3b82}
+
+/* ===== Zoom buttons ===== */
+.map-wrap{position:relative}
+.zoom-ctrl{position:absolute;right:10px;bottom:10px;z-index:20;display:flex;flex-direction:column;gap:6px}
+.zoom-ctrl button{width:40px;height:40px;border:0;border-radius:10px;background:#fff;color:#0b3b82;font-size:20px;font-weight:800;line-height:1;box-shadow:0 3px 10px rgba(11,59,130,.25);cursor:pointer}
+.zoom-ctrl button.fit{font-size:11px}
+</style>
 </head>
 <body data-no-bg>
 <header class="navbar">
@@ -497,7 +622,7 @@ $conn = null;
 
     <section class="panel">
         <h2>Floor Layout</h2>
-        <p class="panel-description">Items use their saved database positions. Click an item to zoom in and view its details on the right.</p>
+        <p class="panel-description">Items use their saved database positions. Tap an item to zoom in and see its details in a pop-up.</p>
 
         <?php if (empty($items)): ?>
             <div class="empty-state">
@@ -514,6 +639,7 @@ $conn = null;
 
             <div class="floor-layout-grid">
                 <div class="floor-layout-column">
+                    <div class="map-wrap">
                     <div class="layout-scroll" id="layoutScroll">
                         <div class="floor-plan" id="floorPlan">
                             <div class="canvas-label"><?= h($building['building_name']) ?> — <?= h($selectedFloorLabel) ?></div>
@@ -559,10 +685,14 @@ $conn = null;
                             <?php endforeach; ?>
                         </div>
                     </div>
-                    <div class="legend-hint">Click an item to zoom in. Click an empty area, press Esc, or use Back to zoom out.</div>
+                    <div class="zoom-ctrl"><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-zoom="out" aria-label="Zoom out">&minus;</button><button type="button" class="fit" data-zoom="fit" aria-label="Show whole floor">Fit</button></div>
+                    </div>
+                    <div class="legend-hint">Tap an item to zoom in. Use + / − or pinch to zoom, drag to move, Fit to see the whole floor.</div>
                 </div>
 
                 <aside class="room-details-panel" id="roomDetailsPanel">
+                    <button type="button" class="info-close" id="infoClose" aria-label="Close">&times;</button>
+                    <span class="sheet-label" id="sheetLabel">ITEM INFORMATION</span>
                     <h2 id="detailsHeading">Room Details</h2>
                     <p class="details-hint">Select a room, office, facility, or navigation point to see its saved information.</p>
                     <div class="room-info-placeholder" id="itemPlaceholder">No item selected yet.</div>
@@ -578,10 +708,10 @@ $conn = null;
                             <div class="image-viewport" id="imageViewport">
                                 <img class="detail-image" id="detailImage" alt="">
                                 <div class="photo-empty-state" id="photoEmptyState" hidden>No room photo is available for this room.</div>
-                                <button type="button" class="photo-nav-arrow photo-nav-back" data-photo-nav="back" aria-label="Go to previous viewpoint" title="Back">⌃</button>
-                                <button type="button" class="photo-nav-arrow photo-nav-forward" data-photo-nav="forward" aria-label="Go to next viewpoint" title="Forward">⌄</button>
-                                <button type="button" class="photo-nav-arrow photo-nav-left" data-photo-nav="left" aria-label="Go to viewpoint on the left" title="Left">‹</button>
-                                <button type="button" class="photo-nav-arrow photo-nav-right" data-photo-nav="right" aria-label="Go to viewpoint on the right" title="Right">›</button>
+                                <button type="button" class="photo-nav-arrow photo-nav-back" data-photo-nav="back" aria-label="Go to previous viewpoint" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+                                <button type="button" class="photo-nav-arrow photo-nav-forward" data-photo-nav="forward" aria-label="Go to next viewpoint" title="Forward"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+                                <button type="button" class="photo-nav-arrow photo-nav-left" data-photo-nav="left" aria-label="Go to viewpoint on the left" title="Left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+                                <button type="button" class="photo-nav-arrow photo-nav-right" data-photo-nav="right" aria-label="Go to viewpoint on the right" title="Right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
                                 <span class="photo-nav-caption" id="photoNavCaption">Choose an arrow to move to a nearby photo</span>
                             </div>
                         </div>
@@ -605,6 +735,25 @@ $conn = null;
 
 <footer class="site-footer">© 2026 CMU Campus Navigator | City of Malabon University</footer>
 
+<nav class="bottom-nav" aria-label="Main">
+    <a href="../index.php#home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>
+        Home
+    </a>
+    <a href="../campus-map.php" class="active" aria-current="page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5l6-2.5 6 2.5 6-2.5v13.5l-6 2.5-6-2.5-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></svg>
+        Map
+    </a>
+    <a href="University-info.php">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>
+        Info
+    </a>
+    <a href="../update_request.php">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5L12 13l8.5-6.5"/></svg>
+        Feedback
+    </a>
+</nav>
+
 <script>
 const items = <?= $itemsJson ?>;
 const floorPlan = document.getElementById('floorPlan');
@@ -618,9 +767,63 @@ let resetTimer = null;
 const detailImage = document.getElementById('detailImage');
 const photoEmptyState = document.getElementById('photoEmptyState');
 
-function showNavigationDestination(button) {
+// Which hallway photo to show when you walk INTO a hallway from another spot.
+// Uses the same saved marker_x / marker_y dots as the in-hallway arrows, so nothing is re-ordered or moved.
+function pickHallwayEntryIndex(sections, direction) {
+    let best = -1, bestVal = 0;
+    sections.forEach(function(part, i) {
+        const x = Number(part.marker_x), y = Number(part.marker_y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        // Entering while moving left -> start at the right end; right -> left end;
+        // forward -> start end (lowest y); back -> far end (highest y).
+        let val;
+        if (direction === 'left') val = x;
+        else if (direction === 'right') val = -x;
+        else if (direction === 'forward') val = -y;
+        else val = y;
+        if (best === -1 || val > bestVal) { best = i; bestVal = val; }
+    });
+    return best === -1 ? 0 : best;
+}
+
+function showHallwayPart(index) {
+    const part = activeHallwaySections[index];
+    if (!part) return false;
+    activeHallwayIndex = index;
+    detailImage.hidden = false;
+    if (photoEmptyState) photoEmptyState.hidden = true;
+    detailImage.src = part.image;
+    detailImage.alt = part.section_name || 'Hallway photo';
+    const caption = document.getElementById('photoNavCaption');
+    if (caption) caption.textContent = part.section_name || 'Hallway photo';
+    const thumbList = document.getElementById('hallwayThumbnails');
+    if (thumbList) {
+        thumbList.querySelectorAll('.hallway-section-photo').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.sectionNumber === String(part.section_number));
+        });
+    }
+    resetImageTransform();
+    return true;
+}
+
+function showNavigationDestination(button, direction) {
     showItem(button);
     const item = items[Number(button.dataset.index)] || {};
+
+    // Arriving at a hallway: show one of its saved area photos (previously the image was left blank).
+    if (isHallwayItem(item) && activeHallwaySections.length > 0) {
+        const ok = showHallwayPart(pickHallwayEntryIndex(activeHallwaySections, direction));
+        if (ok) {
+            imageViewer.hidden = false;
+            imageViewer.classList.add('fullscreen');
+            document.body.style.overflow = 'hidden';
+            if (detailImageLink) { detailImageLink.hidden = false; detailImageLink.disabled = false; }
+            const ph = document.getElementById('imagePlaceholder');
+            if (ph) ph.hidden = true;
+            return;
+        }
+    }
+
     const hasImage = !!item.image;
     if (photoEmptyState) {
         photoEmptyState.hidden = hasImage;
@@ -634,7 +837,7 @@ function showNavigationDestination(button) {
         document.body.style.overflow = 'hidden';
         if (detailImageLink) { detailImageLink.hidden = true; detailImageLink.disabled = true; }
         const caption = document.getElementById('photoNavCaption');
-        if (caption) caption.textContent = (item.item_name || item.category || 'Room') + ' · No photo available';
+        if (caption) caption.textContent = (item.item_name || item.category || 'Room') + ' \u00b7 No photo available';
     } else {
         detailImage.hidden = false;
         imageViewer.hidden = false;
@@ -679,12 +882,75 @@ function zoomToItem(button) {
     const y = parseFloat(button.dataset.y) || 0;
     const w = parseFloat(button.dataset.w) || 140;
     const h = parseFloat(button.dataset.h) || 90;
-    const scale = Math.max(1.2, Math.min(3.5,
-        Math.min((viewWidth * 0.5) / Math.max(w, 1), (viewHeight * 0.5) / Math.max(h, 1))
+    const scale = Math.max(initZ, Math.min(2.2,
+        Math.min((viewWidth * 0.35) / Math.max(w, 1), (viewHeight * 0.35) / Math.max(h, 1))
     ));
     const translateX = viewWidth / 2 + scrollLeft - (x + w / 2) * scale;
     const translateY = viewHeight / 2 + scrollTop - (y + h / 2) * scale;
-    floorPlan.style.transform = 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')';
+    setView(scale, translateX, translateY);
+}
+
+let fitZ = 1, initZ = 1, view = {s:1, x:0, y:0};
+const MAX_Z = 4;
+// Region of the 1200x650 plan that actually holds rooms; the view fits this region (no empty margins).
+let BX = 0, BY = 0, BW = 1200, BH = 650;
+function computeBounds() {
+    if (!floorPlan) return;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    floorPlan.querySelectorAll('.room').forEach(function(btn) {
+        const x = parseFloat(btn.dataset.x) || 0, y = parseFloat(btn.dataset.y) || 0;
+        const w = parseFloat(btn.dataset.w) || 0, h = parseFloat(btn.dataset.h) || 0;
+        const it = items[Number(btn.dataset.index)] || {};
+        const t = (Number(it.rotation) || 0) * Math.PI / 180, c = Math.abs(Math.cos(t)), n = Math.abs(Math.sin(t));
+        const bw = w * c + h * n, bh = w * n + h * c, cx = x + w / 2, cy = y + h / 2;
+        x1 = Math.min(x1, cx - bw / 2); y1 = Math.min(y1, cy - bh / 2);
+        x2 = Math.max(x2, cx + bw / 2); y2 = Math.max(y2, cy + bh / 2);
+    });
+    if (isFinite(x1) && x2 > x1 && y2 > y1) {
+        const pad = 20;
+        BX = Math.max(0, Math.floor(x1 - pad)); BY = Math.max(0, Math.floor(y1 - pad));
+        BW = Math.max(100, Math.min(1200, Math.ceil(x2 + pad)) - BX);
+        BH = Math.max(100, Math.min(650, Math.ceil(y2 + pad)) - BY);
+    }
+}
+const infoBackdrop = document.createElement('div');
+infoBackdrop.className = 'info-backdrop';
+infoBackdrop.hidden = true;
+if (detailsPanel) { infoBackdrop.appendChild(detailsPanel); document.body.appendChild(infoBackdrop); }
+function showInfo() { infoBackdrop.hidden = false; }
+function hideInfo() { infoBackdrop.hidden = true; }
+infoBackdrop.addEventListener('click', function(e) { if (e.target === infoBackdrop) hideInfo(); });
+const infoCloseBtn = document.getElementById('infoClose');
+if (infoCloseBtn) infoCloseBtn.addEventListener('click', hideInfo);
+
+function setView(s, x, y) {
+    const w = layoutScroll.clientWidth, h = layoutScroll.clientHeight;
+    s = Math.max(fitZ, Math.min(MAX_Z, s));
+    const cw = BW * s, ch = BH * s;
+    // Clamp using the room region so the whole floor stays centered and never drifts away.
+    let rx = x + BX * s, ry = y + BY * s;
+    rx = cw <= w ? (w - cw) / 2 : Math.min(0, Math.max(w - cw, rx));
+    ry = ch <= h ? (h - ch) / 2 : Math.min(0, Math.max(h - ch, ry));
+    x = rx - BX * s; y = ry - BY * s;
+    view = {s: s, x: x, y: y};
+    floorPlan.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+}
+function zoomAt(s, mx, my) {
+    const k = Math.max(fitZ, Math.min(MAX_Z, s));
+    const cx = (mx - view.x) / view.s, cy = (my - view.y) / view.s;
+    setView(k, mx - cx * k, my - cy * k);
+}
+function resetFloorView() { setView(fitZ, 0, 0); }
+function applyFit() {
+    if (!floorPlan || !layoutScroll) return;
+    const w = layoutScroll.parentElement.clientWidth;
+    // Whole floor always fits: width-limited on phones, height-limited (70% of screen) on desktop.
+    const maxH = Math.max(240, window.innerHeight * (window.innerWidth <= 768 ? 0.6 : 0.7));
+    fitZ = Math.min(w / BW, maxH / BH);
+    initZ = fitZ;
+    // Box keeps the floor's own proportions: no extra vertical stretch.
+    layoutScroll.style.height = Math.round(BH * fitZ) + 2 + 'px';
+    if (selectedButton) zoomToItem(selectedButton); else resetFloorView();
 }
 
 function addDetail(label, value) {
@@ -788,7 +1054,7 @@ function showItem(button, event) {
         Facilities: 'Facility Details',
         Navigation: isHallwayItem(item) ? 'Hallway Details' : 'Location Details'
     };
-    document.getElementById('detailsHeading').textContent = headingNames[category] || 'Item Details';
+    document.getElementById('detailsHeading').textContent = item.item_name || headingNames[category] || 'Item Details';
     const hallwaySelected = isHallwayItem(item);
     document.getElementById('detailType').closest('.detail-item').hidden = hallwaySelected;
     document.getElementById('detailNumber').closest('.detail-item').hidden = hallwaySelected;
@@ -799,6 +1065,8 @@ function showItem(button, event) {
     document.getElementById('detailName').textContent = item.item_name || 'No name provided';
     document.getElementById('detailFloor').textContent = item.floor || 'N/A';
     document.getElementById('selectedLabel').textContent = hallwaySelected ? 'SELECTED HALLWAY' : 'SELECTED ' + category.toUpperCase();
+    const sheetLabel = document.getElementById('sheetLabel');
+    if (sheetLabel) sheetLabel.textContent = (hallwaySelected ? 'HALLWAY' : ({Room:'ROOM', Offices:'OFFICE', Facilities:'FACILITY'}[category] || 'LOCATION')) + ' INFORMATION';
     const photoCaption = document.getElementById('photoNavCaption');
     if (photoCaption) photoCaption.textContent = (item.item_name || category) + ' · Use arrows to move';
 
@@ -865,7 +1133,7 @@ function showItem(button, event) {
     detailsPanel.classList.add('has-room');
     floorPlan.classList.add('has-selection');
     zoomToItem(button);
-    layoutScroll.scrollIntoView({behavior:'smooth', block:'nearest'});
+    showInfo();
 }
 
 // Keep the item-selection handler accessible to the browser and inline integrations.
@@ -974,7 +1242,7 @@ function navigatePhoto(direction) {
 
     candidates.sort(function(a, b) { return a.score - b.score; });
     if (candidates.length) {
-        showNavigationDestination(candidates[0].button);
+        showNavigationDestination(candidates[0].button, direction);
         return;
     }
 
@@ -983,6 +1251,7 @@ function navigatePhoto(direction) {
 }
 
 function resetView() {
+    hideInfo();
     if (!selectedButton) return;
     selectedButton.classList.remove('selected');
     selectedButton.setAttribute('aria-pressed', 'false');
@@ -993,7 +1262,7 @@ function resetView() {
     });
     const hallwaySequence = document.getElementById('hallwaySequence');
     if (hallwaySequence) hallwaySequence.hidden = true;
-    floorPlan.style.transform = '';
+    resetFloorView();
     floorPlan.classList.remove('has-selection');
     details.hidden = true;
     placeholder.hidden = false;
@@ -1089,9 +1358,78 @@ if (floorPlan && layoutScroll) {
             } else resetView();
         }
     });
-    window.addEventListener('resize', function() {
-        if (selectedButton) zoomToItem(selectedButton);
+    window.addEventListener('resize', applyFit);
+    // Drag to pan, wheel / pinch to zoom (same as campus-map.php)
+    (function() {
+        const pts = new Map();
+        let drag = null, moved = false, pinch = null;
+        layoutScroll.addEventListener('pointerdown', function(e) {
+            pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+            moved = false;
+            if (pts.size === 1) drag = {x: e.clientX, y: e.clientY, vx: view.x, vy: view.y};
+            if (pts.size === 2) {
+                const p = Array.from(pts.values());
+                pinch = {d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), s: view.s};
+                drag = null;
+            }
+        });
+        layoutScroll.addEventListener('pointermove', function(e) {
+            if (!pts.has(e.pointerId)) return;
+            pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+            if (pts.size === 2 && pinch) {
+                const p = Array.from(pts.values()), r = layoutScroll.getBoundingClientRect();
+                const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+                moved = true;
+                floorPlan.classList.add('dragging');
+                zoomAt(pinch.s * d / pinch.d, (p[0].x + p[1].x) / 2 - r.left, (p[0].y + p[1].y) / 2 - r.top);
+                return;
+            }
+            if (drag && pts.size === 1) {
+                const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+                if (!moved && Math.hypot(dx, dy) < 6) return;
+                if (!moved) {
+                    moved = true;
+                    floorPlan.classList.add('dragging');
+                    layoutScroll.classList.add('dragging');
+                    try { layoutScroll.setPointerCapture(e.pointerId); } catch (_) {}
+                }
+                setView(view.s, drag.vx + dx, drag.vy + dy);
+            }
+        });
+        function endPtr(e) {
+            pts.delete(e.pointerId);
+            if (pts.size < 2) pinch = null;
+            if (pts.size === 0) {
+                drag = null;
+                floorPlan.classList.remove('dragging');
+                layoutScroll.classList.remove('dragging');
+            } else if (pts.size === 1) {
+                const p = Array.from(pts.values())[0];
+                drag = {x: p.x, y: p.y, vx: view.x, vy: view.y};
+            }
+        }
+        layoutScroll.addEventListener('pointerup', endPtr);
+        layoutScroll.addEventListener('pointercancel', endPtr);
+        layoutScroll.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            const r = layoutScroll.getBoundingClientRect();
+            zoomAt(view.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - r.left, e.clientY - r.top);
+        }, {passive: false});
+        // A drag must not count as a click on an item.
+        layoutScroll.addEventListener('click', function(e) {
+            if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
+        }, true);
+    })();
+    computeBounds();
+    document.querySelectorAll('[data-zoom]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const w = layoutScroll.clientWidth, h = layoutScroll.clientHeight, a = btn.dataset.zoom;
+            if (a === 'in') zoomAt(view.s * 1.3, w / 2, h / 2);
+            else if (a === 'out') zoomAt(view.s / 1.3, w / 2, h / 2);
+            else resetFloorView();
+        });
     });
+    applyFit();
 }
 </script>
 <script src="floor-layout.js?v=20261026" defer></script>
