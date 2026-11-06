@@ -1,10 +1,26 @@
 <?php
+ob_start(); // buffer output so stray bytes from includes can't block header()
 session_start();
 
 require_once __DIR__ . '/config/database.php';
 
 function h($v) {
     return htmlspecialchars((string)($v ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+function redirect_to(string $url): void {
+    // Discard any stray output (whitespace/BOM from includes) before redirecting
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    if (!headers_sent()) {
+        header('Location: ' . $url);
+        exit;
+    }
+    // Last-resort fallback if headers were already flushed
+    echo '<meta http-equiv="refresh" content="0;url=' . h($url) . '">';
+    echo '<script>location.replace(' . json_encode($url) . ');</script>';
+    exit;
 }
 
 $categories = [
@@ -57,8 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Your session expired. Please try again.';
     } elseif (!empty($_POST['website'])) {
         // Honeypot filled in: a bot. Pretend success.
-        header('Location: update_request.php?submitted=1');
-        exit;
+        redirect_to('update_request.php?submitted=1');
     } else {
         if ($old['name'] === '' || mb_strlen($old['name']) > 150) {
             $errors[] = 'Please enter your full name (up to 150 characters).';
@@ -123,8 +138,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['csrf'] = bin2hex(random_bytes(32));
             $_SESSION['feedback_id'] = (int)$saved['feedback_id'];
 
-            header('Location: update_request.php?submitted=1');
-            exit;
+            // Saved successfully: redirect to the confirmation popup
+            redirect_to('update_request.php?submitted=1');
 
         } catch (Throwable $ex) {
             error_log('Feedback save error: ' . $ex->getMessage());
@@ -585,7 +600,7 @@ footer p { margin: 0; color: #52627a; font-size: 13px; }
 <div class="modal-backdrop" id="successModal" role="dialog" aria-modal="true" aria-labelledby="successTitle">
     <div class="modal-card">
         <div class="success-icon">✓</div>
-        <h2 id="successTitle">Feedback Submitted</h2>
+        <h2 id="successTitle">Feedback Successfully Submitted!</h2>
         <p>Thank you for helping us improve the CMU Campus Navigator.</p>
 
         <?php if ($feedbackId): ?>
