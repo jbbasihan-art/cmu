@@ -250,7 +250,7 @@ main{max-width:1600px;margin:auto;padding:28px}.page-heading{margin-bottom:22px}
   .logo span{display:block;margin-top:3px;font-size:11.5px;color:var(--muted)}
   main{padding:14px 10px}
   .map-layout .panel{padding:10px}
-  .bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:60;display:grid;grid-template-columns:repeat(5,1fr);height:calc(var(--nav-h) + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);background:#fff;border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(11,59,130,.07)}
+  .bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:60;display:grid;grid-template-columns:repeat(4,1fr);height:calc(var(--nav-h) + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);background:#fff;border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(11,59,130,.07)}
   .bottom-nav a{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;font-weight:700;color:#4a5b78;text-decoration:none;-webkit-tap-highlight-color:transparent}
   .bottom-nav svg{width:24px;height:24px}
   .bottom-nav a.active{color:var(--navy)}
@@ -332,9 +332,10 @@ button.stat-card.tappable{cursor:pointer;border:1px solid #d8e1ee;background:#f8
 <link rel="stylesheet" href="mobile.css">
 </head>
 <body>
-<header class="navbar"><div class="logo"><img src="cmu%20logo.jpg" alt="CMU Logo"><div><h2>CMU Campus Navigator</h2><span>City of Malabon University</span></div></div><nav class="nav-links"><a href="index.php#home" class="nav-home">Home</a><a href="campus-map.php" class="nav-home">Campus Map</a><a href="admin/University-info.php" class="nav-home">University Info</a><a href="update_request.php" class="nav-home">Feedback</a><a href="index.php#about" class="nav-home">About</a><a href="admin/login.php" class="nav-admin">Admin Login</a></nav></header>
+<header class="navbar"><div class="logo"><img src="cmu%20logo.jpg" alt="CMU Logo"><div><h2>CMU Campus Navigator</h2><span>City of Malabon University</span></div></div><nav class="nav-links"><a href="index.php#home" class="nav-home">Home</a><a href="campus-map.php" class="nav-home">Campus Map</a><a href="admin/University-info.php" class="nav-home">University Info</a><a href="update_request.php" class="nav-home">Feedback</a><a href="admin/login.php" class="nav-admin">Admin Login</a></nav></header>
 <main><section class="page-heading"><span class="eyebrow">EXPLORE OUR CAMPUS</span><h1>CMU Campus Map</h1><p>Tap a building to see its details, then open its floor layout. Pinch or use + / − to zoom.</p></section>
-<div class="map-layout"><section class="panel"><h2>Campus Layout</h2><p class="panel-description">Building positions and dimensions come from the saved Campus Layout Editor.</p><section class="search-panel"><div class="search-box"><span class="search-icon" aria-hidden="true">🔎</span><input type="search" id="campusSearch" placeholder="Search a building, room, office, or facility (e.g. Library, 101, Registrar)" autocomplete="off" aria-label="Search buildings, rooms, offices, and facilities"><button type="button" class="search-clear" id="searchClear" hidden>Clear</button></div><div class="search-results" id="searchResults" role="listbox"></div></section><div class="map-wrap"><div class="map-scroll" id="mapScroll"><div id="campusCanvas"></div></div></div><div class="legend"><span class="legend-item"><span class="legend-color legend-active"></span>Active</span><span class="legend-item"><span class="legend-color legend-inactive"></span>Inactive</span></div></section>
+<div class="map-layout"><section class="panel"><h2>Campus Layout</h2><p class="panel-description">Building positions and dimensions come from the saved Campus Layout Editor.</p><section class="search-panel"><div class="search-box"><span class="search-icon" aria-hidden="true">🔎</span><input type="search" id="campusSearch" placeholder="Search a building, room, office, or facility (e.g. Library, 101, Registrar)" autocomplete="off" aria-label="Search buildings, rooms, offices, and facilities"><button type="button" class="search-clear" id="searchClear" hidden>Clear</button></div><div class="search-results" id="searchResults" role="listbox"></div></section><div class="map-wrap"><div class="map-scroll" id="mapScroll"><div id="campusCanvas"></div></div>
+<div class="zoom-ctrl"><button type="button" id="zoomIn" aria-label="Zoom in">+</button><button type="button" id="zoomOut" aria-label="Zoom out">−</button><button type="button" class="fit" id="zoomFit" aria-label="Fit map to screen">Fit</button></div></div><div class="legend"><span class="legend-item"><span class="legend-color legend-active"></span>Active</span><span class="legend-item"><span class="legend-color legend-inactive"></span>Inactive</span></div></section>
 <aside><section class="panel info-panel" id="infoPanel" hidden></section><div id="buildingList" hidden></div></aside></div></main>
 <footer>© <?= date("Y") ?> CMU Campus Navigator | City of Malabon University</footer>
 <nav class="bottom-nav" aria-label="Main">
@@ -342,7 +343,6 @@ button.stat-card.tappable{cursor:pointer;border:1px solid #d8e1ee;background:#f8
 <a href="campus-map.php" class="active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5l6-2.5 6 2.5 6-2.5v13.5l-6 2.5-6-2.5-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></svg>Map</a>
 <a href="admin/University-info.php"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>Info</a>
 <a href="update_request.php"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5L12 13l8.5-6.5"/></svg>Feedback</a>
-<a href="index.php#about"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 12.5h8M8 16h8"/></svg>About</a>
 </nav>
 <script>
 const buildings = <?= $buildingsJson ?>;
@@ -405,6 +405,11 @@ mapScroll.addEventListener('pointermove',e=>{
 function endPtr(e){pts.delete(e.pointerId);if(pts.size<2)pinch=null;if(pts.size===0){drag=null;canvas.classList.remove('dragging');mapScroll.classList.remove('dragging')}else if(pts.size===1){const p=[...pts.values()][0];drag={x:p.x,y:p.y,vx:view.x,vy:view.y}}}
 ['pointerup','pointercancel'].forEach(t=>mapScroll.addEventListener(t,endPtr));
 mapScroll.addEventListener('wheel',e=>{e.preventDefault();const r=mapScroll.getBoundingClientRect();zoomAt(view.s*(e.deltaY<0?1.15:1/1.15),e.clientX-r.left,e.clientY-r.top)},{passive:false});
+/* + / - / Fit buttons: zoom around the center of the map */
+function zoomBtn(f){zoomAt(view.s*f,mapScroll.clientWidth/2,mapScroll.clientHeight/2)}
+document.getElementById('zoomIn').addEventListener('click',()=>zoomBtn(1.35));
+document.getElementById('zoomOut').addEventListener('click',()=>zoomBtn(1/1.35));
+document.getElementById('zoomFit').addEventListener('click',resetView);
 mapScroll.addEventListener('click',e=>{if(moved){e.stopPropagation();e.preventDefault();moved=false}},true);
 
 function buildingBox(b){const t=(b.rotation||0)*Math.PI/180,c=Math.abs(Math.cos(t)),n=Math.abs(Math.sin(t));return{w:b.w*c+b.h*n,h:b.w*n+b.h*c}}
