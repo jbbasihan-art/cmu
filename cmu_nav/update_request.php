@@ -292,6 +292,39 @@ main { max-width: 1200px; margin: 0 auto; padding: 34px 24px 40px; }
     font-weight: 800; letter-spacing: .5px;
 }
 
+/* ---------- SUCCESS POPUP ---------- */
+.modal-backdrop {
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; background: rgba(7, 26, 62, .5);
+    animation: fadeIn .2s ease;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal-card {
+    width: 100%; max-width: 560px; max-height: 100%; overflow-y: auto;
+    padding: 40px 28px 36px; text-align: center;
+    background: #fff; border: 1px solid #d8e1ee; border-radius: 16px;
+    box-shadow: 0 24px 60px rgba(7, 26, 62, .35);
+    animation: popIn .25s ease;
+}
+.modal-card .success-icon { margin-bottom: 14px; }
+.modal-card h2 { margin: 0 0 10px; color: var(--navy); font-size: 24px; }
+.modal-card p { max-width: 420px; margin: 0 auto 8px; color: #52627a; font-size: 14px; line-height: 1.8; }
+.modal-card .request-id { margin: 14px 0 18px; }
+.modal-card .modal-actions {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 22px;
+}
+.modal-card .modal-actions .btn { padding: 13px 20px; font-size: 14px; width: auto; min-height: 0; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 480px) {
+    .modal-card { padding: 32px 18px 24px; }
+    .modal-card h2 { font-size: 22px; }
+    .modal-card .modal-actions { flex-direction: column; }
+    .modal-card .modal-actions .btn { width: 100%; min-height: 48px; }
+}
+
 /* ---------- SIDE ---------- */
 .side { display: flex; flex-direction: column; gap: 20px; }
 .side .panel { padding: 22px; margin: 0; }
@@ -412,27 +445,6 @@ footer p { margin: 0; color: #52627a; font-size: 13px; }
         <!-- MAIN COLUMN -->
         <section class="panel">
 
-            <?php if ($submitted): ?>
-
-                <div class="success-box">
-                    <div class="success-icon">✓</div>
-                    <h2>Feedback Submitted</h2>
-                    <p>Thank you for helping us improve the CMU Campus Navigator.</p>
-
-                    <?php if ($feedbackId): ?>
-                        <div class="request-id">Reference No.: FB-<?= str_pad((string)(int)$feedbackId, 5, '0', STR_PAD_LEFT) ?></div>
-                    <?php endif; ?>
-
-                    <p>The administrator will review your feedback. Keep the reference number if you need to follow up.</p>
-
-                    <div class="actions" style="justify-content:center;margin-top:22px">
-                        <a href="update_request.php" class="btn">Submit Another Feedback</a>
-                        <a href="campus-map.php" class="btn btn-light">Back to Campus Map</a>
-                    </div>
-                </div>
-
-            <?php else: ?>
-
                 <h2>Feedback Form</h2>
                 <p class="panel-sub">Fields marked with * are required.</p>
 
@@ -546,8 +558,6 @@ footer p { margin: 0; color: #52627a; font-size: 13px; }
 
                 </form>
 
-            <?php endif; ?>
-
         </section>
 
         <!-- SIDE COLUMN -->
@@ -569,6 +579,28 @@ footer p { margin: 0; color: #52627a; font-size: 13px; }
 <footer>
     <p>© <?= date('Y') ?> CMU Campus Navigator | City of Malabon University</p>
 </footer>
+
+<?php if ($submitted): ?>
+<!-- SUCCESS POPUP -->
+<div class="modal-backdrop" id="successModal" role="dialog" aria-modal="true" aria-labelledby="successTitle">
+    <div class="modal-card">
+        <div class="success-icon">✓</div>
+        <h2 id="successTitle">Feedback Submitted</h2>
+        <p>Thank you for helping us improve the CMU Campus Navigator.</p>
+
+        <?php if ($feedbackId): ?>
+            <div class="request-id">Reference No.: FB-<?= str_pad((string)(int)$feedbackId, 5, '0', STR_PAD_LEFT) ?></div>
+        <?php endif; ?>
+
+        <p>The administrator will review your feedback. Keep the reference number if you need to follow up.</p>
+
+        <div class="modal-actions">
+            <a href="update_request.php" class="btn">Submit Another Feedback</a>
+            <a href="campus-map.php" class="btn btn-light">Back to Campus Map</a>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <nav class="bottom-nav" aria-label="Main">
     <a href="index.php#home">
@@ -622,6 +654,24 @@ if (ratingInput && starBtns.length) {
             ratingInput.value = next;
             paintStars(next);
         });
+    });
+}
+
+/* Success popup: close with Escape or by tapping outside the card.
+   The ?submitted flag is removed so a refresh does not show it again. */
+const successModal = document.getElementById("successModal");
+if (successModal) {
+    document.body.style.overflow = "hidden";
+    function closeModal() {
+        successModal.hidden = true;
+        document.body.style.overflow = "";
+        history.replaceState(null, "", "update_request.php");
+    }
+    successModal.addEventListener("click", function (e) {
+        if (e.target === successModal) closeModal();
+    });
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeModal();
     });
 }
 
