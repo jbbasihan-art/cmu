@@ -180,10 +180,11 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
         }
         .btn:active { transform: scale(.97); }
         .btn-primary { background: var(--yellow); color: var(--navy-dark); }
-        .btn-ghost { border: 1.5px solid rgba(255,255,255,.7); color: #fff; background: rgba(255,255,255,.08); }
 
         /* ---------- QUICK CARDS ---------- */
         .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+        /* Lone last card on mobile stretches across the full row */
+        .qcard:last-child:nth-child(odd) { grid-column: 1 / -1; }
         .qcard {
             display: flex;
             flex-direction: column;
@@ -256,18 +257,6 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
         .feature h3 { margin: 0 0 3px; font-size: 15px; font-weight: 800; color: var(--navy-dark); }
         .feature p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
 
-        /* ---------- ABOUT ---------- */
-        .about {
-            margin-top: 28px;
-            padding: 22px 20px;
-            border-radius: 22px;
-            color: #fff;
-            background: linear-gradient(135deg, var(--navy) 0%, var(--navy-dark) 100%);
-            scroll-margin-top: 80px;
-        }
-        .about h2 { margin: 0 0 10px; font-size: 24px; font-weight: 800; }
-        .about p { margin: 0; font-size: 14px; line-height: 1.65; color: #dbe6f8; }
-
         footer { padding: 22px 16px 8px; text-align: center; font-size: 12px; color: var(--muted); }
         footer p { margin: 0; }
 
@@ -277,7 +266,7 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
             left: 0; right: 0; bottom: 0;
             z-index: 60;
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
             padding-bottom: env(safe-area-inset-bottom, 0px);
             background: #fff;
@@ -325,7 +314,8 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
             .desktop-links { display: flex; }
             .topbar { padding-left: 5%; padding-right: 5%; }
             .page { max-width: 760px; padding-top: 28px; }
-            .quick { grid-template-columns: repeat(4, 1fr); }
+            .quick { grid-template-columns: repeat(3, 1fr); }
+            .qcard:last-child:nth-child(odd) { grid-column: auto; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -359,7 +349,6 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
             <a href="campus-map.php">Campus Map</a>
             <a href="admin/University-info.php">University Info</a>
             <a href="update_request.php">Feedback</a>
-            <a href="index.php#about">About</a>
         </nav>
     </header>
 
@@ -386,7 +375,6 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
 
             <div class="hero-actions">
                 <a href="campus-map.php" class="btn btn-primary">Explore Campus</a>
-                <a href="#about" class="btn btn-ghost">Learn More</a>
             </div>
         </section>
 
@@ -414,14 +402,6 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
                 </div>
                 <strong>Feedback</strong>
                 <span>Send a request</span>
-            </a>
-
-            <a href="#about" class="qcard">
-                <div class="qicon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6c-2-1.5-5-2-8-1.5v13c3-.5 6 0 8 1.5 2-1.5 5-2 8-1.5v-13C17 4 14 4.5 12 6z"/><path d="M12 6v13"/></svg>
-                </div>
-                <strong>About</strong>
-                <span>About this system</span>
             </a>
         </section>
 
@@ -456,23 +436,7 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
                         <p>Search for rooms, offices, facilities, departments, and other campus information.</p>
                     </div>
                 </div>
-                <div class="feature">
-                    <div class="qicon">📷</div>
-                    <div>
-                        <h3>360° Virtual Tour</h3>
-                        <p>Explore supported campus locations through available 360° virtual tour links.</p>
-                    </div>
-                </div>
             </div>
-        </section>
-
-        <!-- ABOUT -->
-        <section class="about" id="about">
-            <h2>Navigate CMU with ease.</h2>
-            <p>
-                CMU Campus Navigator is a web-based campus navigation and information system designed to help
-                students, visitors, faculty, and other users locate important places within City of Malabon University.
-            </p>
         </section>
 
         <footer>
@@ -497,10 +461,6 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
         <a href="update_request.php">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5L12 13l8.5-6.5"/></svg>
             Feedback
-        </a>
-        <a href="#about">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 12.5h8M8 16h8"/></svg>
-            About
         </a>
     </nav>
 
@@ -561,18 +521,6 @@ $searchItemsJson = json_encode($searchItems, JSON_HEX_TAG | JSON_HEX_APOS | JSON
             document.addEventListener("click", function (e) {
                 if (!e.target.closest(".search-wrap")) close();
             });
-        })();
-
-        // Highlight bottom-nav item for the section in view
-        (function () {
-            var links = document.querySelectorAll(".bottom-nav a");
-            var about = document.getElementById("about");
-            if (!about || !("IntersectionObserver" in window)) return;
-            new IntersectionObserver(function (entries) {
-                var inAbout = entries[0].isIntersecting;
-                links.forEach(function (a) { a.classList.remove("active"); });
-                links[inAbout ? 4 : 0].classList.add("active");
-            }, { threshold: 0.4 }).observe(about);
         })();
     </script>
 </body>
