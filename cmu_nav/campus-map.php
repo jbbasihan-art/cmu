@@ -71,6 +71,66 @@ try {
     $searchRooms = [];
 }
 $searchRoomsJson = json_encode($searchRooms, $jsonFlags) ?: "[]";
+
+/* ---------- Navigation data readiness (navigation_points / navigation_point_sections) ----------
+   Only table existence and a per-building count of navigation_points are read here.
+   No column names beyond building_id are assumed. */
+$navInfo = ["pointsTable" => false, "sectionsTable" => false, "pointsByBuilding" => new stdClass()];
+try {
+    $isTrue = function ($v) { return $v === true || $v === "t" || $v === "true" || $v === 1 || $v === "1"; };
+    $chk = $conn->query("SELECT to_regclass('public.navigation_points') IS NOT NULL AS p,
+                                to_regclass('public.navigation_point_sections') IS NOT NULL AS s")->fetch(PDO::FETCH_ASSOC);
+    $navInfo["pointsTable"] = $isTrue($chk["p"] ?? false);
+    $navInfo["sectionsTable"] = $isTrue($chk["s"] ?? false);
+    if ($navInfo["pointsTable"]) {
+        $byBuilding = [];
+        $cnt = $conn->query("SELECT building_id, COUNT(*) AS c FROM navigation_points WHERE building_id IS NOT NULL GROUP BY building_id");
+        foreach ($cnt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $byBuilding[(int)$r["building_id"]] = (int)$r["c"];
+        }
+        $navInfo["pointsByBuilding"] = (object)$byBuilding;
+    }
+} catch (Throwable $ex) {
+    error_log("Campus map navigation info error: " . $ex->getMessage());
+}
+$navInfoJson = json_encode($navInfo, $jsonFlags) ?: "{}";
+
+/* ---------- Optional GPS calibration (config/campus_geo.php) ----------
+   GPS can only be shown on the map when the real-world latitude/longitude of the map's
+   top-left and bottom-right corners are known. Nothing is guessed: without this file the
+   GPS button still works but explains that the map is not calibrated. */
+$campusGeo = null;
+$geoFile = __DIR__ . "/config/campus_geo.php";
+if (is_file($geoFile)) {
+    $lvl = ob_get_level();
+    ob_start();
+    try {
+        $cfg = include $geoFile;
+    } catch (Throwable $ex) {
+        $cfg = null;
+        error_log("campus_geo.php error: " . $ex->getMessage());
+    }
+    while (ob_get_level() > $lvl) ob_end_clean();
+
+    $validPoint = function ($p) {
+        return is_array($p) && count($p) === 2 && is_numeric($p[0]) && is_numeric($p[1])
+            && abs((float)$p[0]) <= 90 && abs((float)$p[1]) <= 180;
+    };
+    if (is_array($cfg) && $validPoint($cfg["top_left"] ?? null) && $validPoint($cfg["bottom_right"] ?? null)) {
+        $tl = [(float)$cfg["top_left"][0], (float)$cfg["top_left"][1]];
+        $br = [(float)$cfg["bottom_right"][0], (float)$cfg["bottom_right"][1]];
+        // North-up map: top-left must be north-west of bottom-right.
+        if ($tl[0] > $br[0] && $tl[1] < $br[1]) {
+            $campusGeo = [
+                "top_left" => $tl,
+                "bottom_right" => $br,
+                "max_accuracy_m" => max(5, min(100, (float)($cfg["max_accuracy_m"] ?? 40)))
+            ];
+        }
+    }
+}
+$campusGeoJson = json_encode($campusGeo, $jsonFlags);
+if ($campusGeoJson === false) $campusGeoJson = "null";
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -328,14 +388,133 @@ button.stat-card.tappable{cursor:pointer;border:1px solid #d8e1ee;background:#f8
 .sheet-actions button{flex:1;min-width:0;padding:14px 8px;font-size:14.5px;border-radius:12px}
 @media(max-width:340px){.info-panel .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
+/* ===== Pin location & navigation ===== */
+:root{--pin-start:#1d4ed8;--pin-dest:#c2410c;--route:#7c3aed}
+
+/* Navigation panel (above the map) */
+.nav-panel{margin:0 0 16px;padding:14px;border:1px solid #d8e1ee;border-radius:12px;background:#f8faff}
+.nav-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.nav-head h3{margin:0;color:var(--navy);font-size:17px}
+.nav-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.nav-field{min-width:0}
+.nav-field label{display:flex;align-items:center;gap:7px;margin-bottom:6px;color:#43536b;font-size:13px;font-weight:700}
+.nav-field select{width:100%;min-height:46px;padding:10px;border:1px solid #cbd6e5;border-radius:8px;background:#fff;color:#172b4d;font:inherit;font-size:15px}
+.nav-field select:focus{outline:2px solid #d6e5fb;border-color:var(--navy)}
+.nav-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.nav-btn{flex:1 1 auto;display:inline-block;min-height:42px;padding:10px 12px;border:0;border-radius:8px;background:var(--navy);color:#fff;text-align:center;text-decoration:none;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.nav-btn.light{background:var(--ice);color:var(--navy)}
+.nav-btn.on{background:#d9a900;color:#3b2c00}
+.nav-btn:disabled{opacity:.6;cursor:wait}
+.nav-hint{margin:8px 0 0;color:#68758a;font-size:12px;line-height:1.5}
+.nav-msg{margin:10px 0 0;color:#52627a;font-size:13px;line-height:1.5}
+.nav-msg:empty{display:none}
+.nav-msg.warn{color:#8a5a00}
+.dot{display:inline-block;flex:0 0 auto;width:13px;height:13px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #94a3b8}
+.dot.start{background:var(--pin-start)}
+.dot.dest{background:var(--pin-dest)}
+.nav-card{margin-top:12px;padding:12px;border:1px solid #d8e1ee;border-radius:10px;background:#fff}
+.nav-row{display:flex;align-items:flex-start;gap:10px;padding:6px 0}
+.nav-row+.nav-row{border-top:1px solid #eef2f8}
+.nav-row .dot{margin-top:4px}
+.nav-row-main{flex:1;min-width:0}
+.nav-row-main b{display:block;color:var(--navy);font-size:14px;overflow-wrap:anywhere}
+.nav-row-main small{display:block;margin-top:2px;color:#52627a;font-size:12px;line-height:1.4}
+.nav-row-main .muted{color:#7a879c}
+.nav-badge{flex:0 0 auto;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
+.nav-badge.gps{background:#dbeafe;color:#1e3a8a}
+.nav-badge.manual{background:#eef2f8;color:#43536b}
+.nav-badge.low{background:#fff3cd;color:#8a5a00}
+.nav-note{margin:8px 0 0;color:#52627a;font-size:12.5px;line-height:1.55}
+.nav-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+
+.pick-banner{position:absolute;left:50%;top:10px;z-index:85;display:flex;align-items:center;gap:10px;max-width:calc(100% - 20px);padding:7px 8px 7px 14px;border-radius:999px;background:var(--pin-start);color:#fff;font-size:13px;font-weight:700;box-shadow:0 6px 16px rgba(7,26,62,.35);transform:translateX(-50%)}
+.pick-banner[hidden]{display:none}
+.pick-banner button{padding:6px 12px;border:0;border-radius:999px;background:#fff;color:var(--pin-start);font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+.map-scroll.picking,.map-scroll.picking.dragging{cursor:crosshair}
+
+/* Pins live inside the canvas, so they pan and zoom with the map. --pin keeps them a steady on-screen size. */
+.route-layer{position:absolute;left:0;top:0;z-index:65;pointer-events:none;overflow:visible}
+#pinLayer{position:absolute;left:0;top:0;width:100%;height:100%;z-index:70;pointer-events:none}
+.acc-ring{position:absolute;border-radius:50%;background:rgba(29,78,216,.14);border:2px solid rgba(29,78,216,.55);transform:translate(-50%,-50%);pointer-events:none}
+.pin{position:absolute;width:30px;height:40px;pointer-events:auto;cursor:pointer;outline:none;transform-origin:50% 100%;transform:translate(-50%,-100%) scale(var(--pin,1));filter:drop-shadow(0 3px 3px rgba(0,0,0,.45))}
+.pin.start{z-index:2}.pin.dest{z-index:3}
+.pin.open{z-index:6}
+.pin.near.start{margin-left:calc(-17px * var(--pin,1))}
+.pin.near.dest{margin-left:calc(17px * var(--pin,1))}
+.pin-art{display:block;width:100%;height:100%}
+.pin-art svg{display:block;width:100%;height:100%}
+.pin:focus-visible .pin-art{outline:3px solid #ffdf45;outline-offset:2px;border-radius:8px}
+.pin.gps::after{content:"";position:absolute;left:50%;bottom:-6px;width:18px;height:18px;margin-left:-9px;border:3px solid var(--pin-start);border-radius:50%;animation:pinPulse 1.8s ease-out infinite;pointer-events:none}
+@keyframes pinPulse{from{transform:scale(.3);opacity:.95}to{transform:scale(1.9);opacity:0}}
+@media(prefers-reduced-motion:reduce){.pin.gps::after{animation:none;opacity:.5}}
+.pin-chip{position:absolute;left:100%;top:4px;margin-left:3px;padding:2px 7px;border:1px solid #fff;border-radius:999px;color:#fff;font:700 11px/1.3 Arial,Helvetica,sans-serif;white-space:nowrap;pointer-events:none}
+.pin.start .pin-chip{background:var(--pin-start)}
+.pin.dest .pin-chip{background:var(--pin-dest)}
+.pin-tip{display:none;position:absolute;bottom:calc(100% + 8px);left:50%;z-index:5;width:max-content;max-width:230px;padding:9px 11px;border-radius:10px;background:#fff;color:#172b4d;text-align:left;font:13px/1.4 Arial,Helvetica,sans-serif;box-shadow:0 6px 18px rgba(7,26,62,.35);transform:translateX(-50%);cursor:default}
+.pin.open .pin-tip{display:block}
+.pin-tip.below{bottom:auto;top:calc(100% + 8px)}
+.pin-tip.al-left{left:0;transform:none}
+.pin-tip.al-right{left:auto;right:0;transform:none}
+.pin-tip b{display:block;color:var(--navy);overflow-wrap:anywhere}
+.pin-tip small{display:block;margin-top:2px;color:#52627a;font-size:12px}
+.pin-tip .tip-warn{margin-top:5px;color:#8a5a00;font-size:12px}
+.pin-tip a{display:inline-block;margin-top:7px;padding:6px 10px;border-radius:6px;background:var(--navy);color:#fff;text-decoration:none;font-size:12px;font-weight:700}
+
+.legend-pin{width:13px;height:13px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px #94a3b8}
+.legend-pin.start{background:var(--pin-start)}
+.legend-pin.dest{background:var(--pin-dest)}
+.legend-line{width:20px;height:0;border-top:3px dashed var(--route)}
+
+/* "Go here" / "Start here" buttons in search results and the building pop-up */
+.result-link.go{margin-left:-12px;border:0;background:var(--pin-dest);font-family:inherit;cursor:pointer}
+.sheet-nav{display:flex;gap:8px;margin-top:12px}
+.sheet-nav button{flex:1;min-width:0;padding:12px 6px;border:0;border-radius:10px;color:#fff;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.sheet-nav .to{background:var(--pin-dest)}
+.sheet-nav .from{background:var(--pin-start)}
+.sheet-row{display:flex;align-items:stretch;border-bottom:1px solid #e5eaf2}
+.sheet-row:last-child{border-bottom:0}
+.sheet-row .sheet-item{flex:1;min-width:0;border-bottom:0}
+.sheet-go{flex:0 0 auto;margin:6px 8px 6px 0;padding:0 10px;border:0;border-radius:8px;background:var(--pin-dest);color:#fff;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+
+@media(max-width:650px){
+  .nav-grid{grid-template-columns:1fr}
+  .nav-panel{padding:12px}
+  .nav-btn{min-height:46px}
+  .result-link.go{margin-left:0}
+}
+
 </style>
 <link rel="stylesheet" href="mobile.css">
 </head>
 <body>
 <header class="navbar"><div class="logo"><img src="cmu%20logo.jpg" alt="CMU Logo"><div><h2>CMU Campus Navigator</h2><span>City of Malabon University</span></div></div><nav class="nav-links"><a href="index.php#home" class="nav-home">Home</a><a href="campus-map.php" class="nav-home">Campus Map</a><a href="admin/University-info.php" class="nav-home">University Info</a><a href="update_request.php" class="nav-home">Feedback</a><a href="admin/login.php" class="nav-admin">Admin Login</a></nav></header>
 <main><section class="page-heading"><span class="eyebrow">EXPLORE OUR CAMPUS</span><h1>CMU Campus Map</h1><p>Tap a building to see its details, then open its floor layout. Pinch or use + / − to zoom.</p></section>
-<div class="map-layout"><section class="panel"><h2>Campus Layout</h2><p class="panel-description">Building positions and dimensions come from the saved Campus Layout Editor.</p><section class="search-panel"><div class="search-box"><span class="search-icon" aria-hidden="true">🔎</span><input type="search" id="campusSearch" placeholder="Search a building, room, office, or facility (e.g. Library, 101, Registrar)" autocomplete="off" aria-label="Search buildings, rooms, offices, and facilities"><button type="button" class="search-clear" id="searchClear" hidden>Clear</button></div><div class="search-results" id="searchResults" role="listbox"></div></section><div class="map-wrap"><div class="map-scroll" id="mapScroll"><div id="campusCanvas"></div></div>
-<div class="zoom-ctrl"><button type="button" id="zoomIn" aria-label="Zoom in">+</button><button type="button" id="zoomOut" aria-label="Zoom out">−</button><button type="button" class="fit" id="zoomFit" aria-label="Fit map to screen">Fit</button></div></div><div class="legend"><span class="legend-item"><span class="legend-color legend-active"></span>Active</span><span class="legend-item"><span class="legend-color legend-inactive"></span>Inactive</span></div></section>
+<div class="map-layout"><section class="panel"><h2>Campus Layout</h2><p class="panel-description">Building positions and dimensions come from the saved Campus Layout Editor.</p><section class="search-panel"><div class="search-box"><span class="search-icon" aria-hidden="true">🔎</span><input type="search" id="campusSearch" placeholder="Search a building, room, office, or facility (e.g. Library, 101, Registrar)" autocomplete="off" aria-label="Search buildings, rooms, offices, and facilities"><button type="button" class="search-clear" id="searchClear" hidden>Clear</button></div><div class="search-results" id="searchResults" role="listbox"></div></section>
+
+<section class="nav-panel" id="navPanel" aria-label="Pin your location and choose a destination">
+  <div class="nav-head"><h3>Find your way</h3><button type="button" class="search-clear" id="navClear" hidden>Clear pins</button></div>
+  <div class="nav-grid">
+    <div class="nav-field">
+      <label for="startSelect"><span class="dot start" aria-hidden="true"></span>Where are you? (starting point)</label>
+      <select id="startSelect" aria-label="Starting point"></select>
+      <div class="nav-btns">
+        <button type="button" class="nav-btn" id="gpsBtn">📍 Use my location</button>
+        <button type="button" class="nav-btn light" id="pickBtn">👆 Tap on map</button>
+      </div>
+    </div>
+    <div class="nav-field">
+      <label for="destSelect"><span class="dot dest" aria-hidden="true"></span>Where to? (destination)</label>
+      <select id="destSelect" aria-label="Destination"></select>
+      <p class="nav-hint">Pick a building, room, office, or facility. You can also use “Go here” in the search results or in a building’s pop-up.</p>
+    </div>
+  </div>
+  <p class="nav-msg" id="navMsg" role="status" aria-live="polite"></p>
+  <div id="navSummary" hidden></div>
+</section>
+
+<div class="map-wrap"><div class="map-scroll" id="mapScroll"><div id="campusCanvas"></div></div>
+<div class="pick-banner" id="pickBanner" hidden><span>Tap the map where you are</span><button type="button" id="pickCancel">Cancel</button></div>
+<div class="zoom-ctrl"><button type="button" id="zoomIn" aria-label="Zoom in">+</button><button type="button" id="zoomOut" aria-label="Zoom out">−</button><button type="button" class="fit" id="zoomFit" aria-label="Fit map to screen">Fit</button></div></div><div class="legend"><span class="legend-item"><span class="legend-color legend-active"></span>Active</span><span class="legend-item"><span class="legend-color legend-inactive"></span>Inactive</span><span class="legend-item"><span class="legend-pin start"></span>Your location</span><span class="legend-item"><span class="legend-pin dest"></span>Destination</span><span class="legend-item"><span class="legend-line"></span>Route preview</span></div></section>
 <aside><section class="panel info-panel" id="infoPanel" hidden></section><div id="buildingList" hidden></div></aside></div></main>
 <footer>© <?= date("Y") ?> CMU Campus Navigator | City of Malabon University</footer>
 <nav class="bottom-nav" aria-label="Main">
@@ -347,6 +526,8 @@ button.stat-card.tappable{cursor:pointer;border:1px solid #d8e1ee;background:#f8
 <script>
 const buildings = <?= $buildingsJson ?>;
 const searchRooms = <?= $searchRoomsJson ?>;
+const geoCfg = <?= $campusGeoJson ?>;
+const navInfo = <?= $navInfoJson ?>;
 const canvas=document.getElementById('campusCanvas'), mapScroll=document.getElementById('mapScroll'), buildingList=document.getElementById('buildingList'), infoPanel=document.getElementById('infoPanel');
 let selectedId=null, selectedAt=0;
 function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n}
@@ -379,6 +560,10 @@ function setView(s,x,y){
   view={s,x,y};
   canvas.style.transform='translate('+x+'px,'+y+'px) scale('+s+')';
   canvas.style.setProperty('--lbl',Math.max(1,Math.min(3.2,.9/s)).toFixed(2));
+  /* pins and the route preview keep a steady on-screen size while the map zooms */
+  const pv=Math.max(.25,Math.min(4,1/s));
+  canvas.style.setProperty('--pin',pv.toFixed(3));
+  styleRoute(pv);updateNear();refreshTips();
 }
 const backdrop=el('div','info-backdrop');backdrop.hidden=true;backdrop.appendChild(infoPanel);document.body.appendChild(backdrop);
 function hideInfo(){infoPanel.hidden=true;backdrop.hidden=true}
@@ -410,15 +595,18 @@ function zoomBtn(f){zoomAt(view.s*f,mapScroll.clientWidth/2,mapScroll.clientHeig
 document.getElementById('zoomIn').addEventListener('click',()=>zoomBtn(1.35));
 document.getElementById('zoomOut').addEventListener('click',()=>zoomBtn(1/1.35));
 document.getElementById('zoomFit').addEventListener('click',resetView);
-mapScroll.addEventListener('click',e=>{if(moved){e.stopPropagation();e.preventDefault();moved=false}},true);
+/* A drag must never count as a click (stopImmediatePropagation also keeps the "tap to set my location" handler from firing) */
+mapScroll.addEventListener('click',e=>{if(moved){e.stopImmediatePropagation();e.preventDefault();moved=false}},true);
 
 function buildingBox(b){const t=(b.rotation||0)*Math.PI/180,c=Math.abs(Math.cos(t)),n=Math.abs(Math.sin(t));return{w:b.w*c+b.h*n,h:b.w*n+b.h*c}}
 function fillList(list,b,type,label){
  list.replaceChildren();
  const items=searchRooms.filter(r=>r.buildingId===b.id&&r.type===type);
  if(!items.length)list.appendChild(el('div','sheet-empty','No '+label.toLowerCase()+' listed for this building.'));
- items.forEach(r=>{const it=el('button','sheet-item');it.type='button';it.appendChild(el('b','',r.number!==''?r.number+' \u2014 '+r.name:r.name));if(r.floor!=='')it.appendChild(el('small','',r.floor));
-  it.onclick=()=>{location.href='admin/floor-layout.php?building_id='+encodeURIComponent(b.id)+'&floor='+encodeURIComponent(floorNumber(r.floor))};list.appendChild(it)});
+ items.forEach(r=>{const row=el('div','sheet-row');const it=el('button','sheet-item');it.type='button';it.appendChild(el('b','',r.number!==''?r.number+' \u2014 '+r.name:r.name));if(r.floor!=='')it.appendChild(el('small','',r.floor));
+  it.onclick=()=>{location.href='admin/floor-layout.php?building_id='+encodeURIComponent(b.id)+'&floor='+encodeURIComponent(floorNumber(r.floor))};
+  const go=el('button','sheet-go','Go here');go.type='button';go.title='Set as destination';go.onclick=ev=>{ev.stopPropagation();goToPlace(placeKeyForRoom(r))};
+  row.appendChild(it);row.appendChild(go);list.appendChild(row)});
  list.hidden=false;
 }
 function buildInfo(b){
@@ -433,7 +621,12 @@ function buildInfo(b){
   c.appendChild(el('strong','',Number(val||0).toLocaleString()));c.appendChild(el('span','',label));
   if(type)c.onclick=()=>{stats.querySelectorAll('.tappable').forEach(n=>n.classList.remove('on'));if(openType===type){openType=null;list.hidden=true;return}openType=type;c.classList.add('on');fillList(list,b,type,label)};
   stats.appendChild(c)});
- body.appendChild(stats);body.appendChild(list);infoPanel.appendChild(body);
+ body.appendChild(stats);body.appendChild(list);
+ const navRow=el('div','sheet-nav');
+ const from=el('button','from','\ud83d\udccd Start here');from.type='button';from.onclick=()=>startAtBuilding(b.id);
+ const to=el('button','to','\ud83c\udfaf Go here');to.type='button';to.onclick=()=>goToBuilding(b.id);
+ navRow.appendChild(from);navRow.appendChild(to);body.appendChild(navRow);
+ infoPanel.appendChild(body);
  const act=el('div','sheet-actions');
  const open=el('button','primary','Open Floor Layout');open.type='button';open.onclick=()=>location.href=floorUrl(b);
  const back=el('button','secondary','Reset View');back.type='button';back.onclick=resetView;
@@ -452,15 +645,334 @@ function select(b,quiet){
  setView(sc,vw/2-cx*sc,vh/2-cy*sc);
 }
 function handleClick(b){if(isCampusElement(b))return;if(selectedId===b.id&&!infoPanel.hidden&&performance.now()-selectedAt>400){location.href=floorUrl(b);return}select(b)}
+
+/* ===================================================================
+   Pin location & navigation preparation
+   - Start and destination pins are placed from real map data:
+     buildings use their saved layout position (center of the building);
+     rooms / offices / facilities are anchored to the building that contains them.
+   - GPS is only shown when config/campus_geo.php calibrates the map to real
+     latitude/longitude. Without it, GPS is never faked: the student picks manually.
+   - The dashed line is a straight-line PREVIEW only, not a walking route.
+   =================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const GPS_MAX_ACCURACY_HARD=200;
+const startSelect=document.getElementById('startSelect'), destSelect=document.getElementById('destSelect');
+const gpsBtn=document.getElementById('gpsBtn'), pickBtn=document.getElementById('pickBtn');
+const navMsg=document.getElementById('navMsg'), navSummary=document.getElementById('navSummary'), navClear=document.getElementById('navClear');
+const pickBanner=document.getElementById('pickBanner'), pickCancel=document.getElementById('pickCancel');
+const nav={start:null,dest:null,picking:false};
+const places=[], placeByKey=new Map(), pinEls={};
+const KIND={Room:'Room',Offices:'Office',Facilities:'Facility'}, PREFIX={Room:'r',Offices:'o',Facilities:'f'};
+let ring=null;
+
+const pinLayer=el('div');pinLayer.id='pinLayer';
+const routeSvg=document.createElementNS(NS,'svg');routeSvg.setAttribute('class','route-layer');routeSvg.setAttribute('aria-hidden','true');
+const routeLine=document.createElementNS(NS,'line');
+routeLine.setAttribute('stroke','#7c3aed');routeLine.setAttribute('stroke-linecap','round');routeLine.setAttribute('visibility','hidden');
+routeSvg.appendChild(routeLine);
+
+function attachNavLayers(){
+ routeSvg.setAttribute('width',CANVAS_W);routeSvg.setAttribute('height',CANVAS_H);routeSvg.setAttribute('viewBox','0 0 '+CANVAS_W+' '+CANVAS_H);
+ canvas.appendChild(routeSvg);canvas.appendChild(pinLayer);
+}
+function styleRoute(p){routeLine.setAttribute('stroke-width',(4*p).toFixed(2));routeLine.setAttribute('stroke-dasharray',(10*p).toFixed(2)+' '+(8*p).toFixed(2))}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function msg(text,cls){navMsg.textContent=text||'';navMsg.className='nav-msg'+(cls?' '+cls:'')}
+function reveal(){const r=mapScroll.getBoundingClientRect();if(r.top<0||r.bottom>window.innerHeight)mapScroll.scrollIntoView({block:'center',behavior:'smooth'})}
+
+/* ---- places (all come from the buildings / rooms / offices / facilities data already loaded) ---- */
+function centerOf(b){return{x:b.x-OX+b.w/2,y:b.y-OY+b.h/2}}
+function placeKeyForRoom(r){return PREFIX[r.type]+':'+r.id}
+function placeTitle(p){return p.number?p.number+' \u2014 '+p.name:p.name}
+function placeSub(p){
+ const b=byId(p.buildingId);
+ if(p.kind==='Building')return 'Building \u00b7 '+b.floors+(b.floors===1?' floor':' floors');
+ if(p.kind==='Facility')return 'Facility \u00b7 '+b.name+(p.detail?' \u00b7 '+p.detail:'');
+ return p.kind+' \u00b7 '+b.name+(p.detail?' \u00b7 '+p.detail:'');
+}
+function buildPlaces(){
+ places.length=0;placeByKey.clear();
+ buildings.filter(b=>!isCampusElement(b)).forEach(b=>{const p={key:'b:'+b.id,kind:'Building',buildingId:b.id,name:b.name,number:'',detail:'',floorNo:1};places.push(p)});
+ searchRooms.forEach(r=>{
+  const b=byId(r.buildingId);if(!b||isCampusElement(b)||!r.name&&!r.number)return;
+  places.push({key:placeKeyForRoom(r),kind:KIND[r.type]||'Room',buildingId:b.id,name:r.name||r.number,number:r.number,detail:r.floor,floorNo:r.type==='Facilities'?1:floorNumber(r.floor)});
+ });
+ places.forEach(p=>placeByKey.set(p.key,p));
+}
+function fillSelects(){
+ const bs=buildings.filter(b=>!isCampusElement(b)).sort((a,b)=>a.name.localeCompare(b.name));
+ const order={Room:1,Office:2,Facility:3};
+ [startSelect,destSelect].forEach(sel=>{
+  sel.replaceChildren();
+  const first=el('option','',sel===startSelect?'Choose your starting point\u2026':'Choose a destination\u2026');first.value='';sel.appendChild(first);
+  if(sel===startSelect){const c=el('option','','');c.value='__custom';c.id='startCustom';c.hidden=true;sel.appendChild(c)}
+  bs.forEach(b=>{
+   const g=document.createElement('optgroup');g.label=b.name;
+   const w=el('option','','\ud83c\udfe2 Whole building');w.value='b:'+b.id;g.appendChild(w);
+   places.filter(p=>p.buildingId===b.id&&p.kind!=='Building').sort((a,c)=>(order[a.kind]-order[c.kind])||placeTitle(a).localeCompare(placeTitle(c))).forEach(p=>{
+    const o=el('option','',placeTitle(p)+' \u00b7 '+p.kind+(p.detail?' \u00b7 '+p.detail:''));o.value=p.key;g.appendChild(o)});
+   sel.appendChild(g);
+  });
+ });
+}
+
+/* ---- geometry helpers ---- */
+function buildingAt(x,y){
+ for(const b of [...buildings].reverse()){
+  if(isCampusElement(b))continue;
+  const c=centerOf(b),t=-(b.rotation||0)*Math.PI/180,dx=x-c.x,dy=y-c.y;
+  const lx=dx*Math.cos(t)-dy*Math.sin(t),ly=dx*Math.sin(t)+dy*Math.cos(t);
+  if(Math.abs(lx)<=b.w/2&&Math.abs(ly)<=b.h/2)return b;
+ }
+ return null;
+}
+function geoScale(){
+ if(!geoCfg)return null;
+ const[lat1,lng1]=geoCfg.top_left,[lat2,lng2]=geoCfg.bottom_right,midLat=(lat1+lat2)/2*Math.PI/180;
+ const wM=Math.abs(lng2-lng1)*111320*Math.cos(midLat),hM=Math.abs(lat1-lat2)*110574;
+ if(!(wM>0&&hM>0))return null;
+ return{pxPerMeter:(CANVAS_W/wM+CANVAS_H/hM)/2};
+}
+function geoToCanvas(lat,lng){
+ const[lat1,lng1]=geoCfg.top_left,[lat2,lng2]=geoCfg.bottom_right;
+ const fx=(lng-lng1)/(lng2-lng1),fy=(lat1-lat)/(lat1-lat2);
+ return{fx,fy,x:fx*CANVAS_W,y:fy*CANVAS_H};
+}
+function distanceMeters(){
+ const s=nav.start,d=nav.dest,sc=geoScale();
+ if(!s||!d||!sc)return null;
+ return Math.hypot(s.x-d.x,s.y-d.y)/sc.pxPerMeter;
+}
+
+/* ---- state changes ---- */
+function setStart(s,fit){nav.start=s;renderNav(fit)}
+function setStartPlace(p){
+ if(!p){setStart(null,false);return}
+ const b=byId(p.buildingId),c=centerOf(b);
+ setStart({source:'manual-place',key:p.key,title:placeTitle(p),sub:'Starting point \u00b7 selected manually \u00b7 '+placeSub(p),x:c.x,y:c.y,buildingId:b.id},true);
+}
+function setDestination(p){
+ if(!p){nav.dest=null;renderNav(false);return}
+ const b=byId(p.buildingId),c=centerOf(b);
+ nav.dest={key:p.key,kind:p.kind,title:placeTitle(p),sub:placeSub(p),x:c.x,y:c.y,buildingId:b.id,floorNo:p.floorNo};
+ renderNav(true);
+}
+function goToBuilding(id){resetView();closeResults();setDestination(placeByKey.get('b:'+id));reveal()}
+function goToPlace(key){resetView();closeResults();setDestination(placeByKey.get(key));reveal()}
+function startAtBuilding(id){resetView();setStartPlace(placeByKey.get('b:'+id));reveal()}
+function clearNav(){stopPicking();nav.start=null;nav.dest=null;msg('');renderNav(false);resetView()}
+
+/* ---- pins ---- */
+function pinSvg(fill,glyph){return '<svg viewBox="0 0 30 40" aria-hidden="true"><path d="M15 1.5C7.6 1.5 1.5 7.5 1.5 14.9 1.5 25 15 38.5 15 38.5S28.5 25 28.5 14.9C28.5 7.5 22.4 1.5 15 1.5z" fill="'+fill+'" stroke="#fff" stroke-width="2.2"/>'+glyph+'</svg>'}
+const GLYPH_GPS='<circle cx="15" cy="15" r="5.5" fill="#fff"/>';
+const GLYPH_MANUAL='<circle cx="15" cy="15" r="6.8" fill="#fff"/><circle cx="15" cy="15" r="2.6" fill="#1d4ed8"/>';
+const GLYPH_DEST='<polygon points="15,6.2 17.6,11.9 23.8,12.6 19.2,16.8 20.5,23 15,19.8 9.5,23 10.8,16.8 6.2,12.6 12.4,11.9" fill="#fff"/>';
+function pinInfo(kind){
+ if(kind==='start'&&nav.start){
+  const s=nav.start,gps=s.source==='gps';
+  return{x:s.x,y:s.y,title:s.title,sub:s.sub,cls:gps?'gps':'manual',chip:gps?'You \u00b7 GPS':'You \u00b7 manual',svg:pinSvg('#1d4ed8',gps?GLYPH_GPS:GLYPH_MANUAL),warn:s.lowAccuracy?'GPS accuracy is low. Confirm this spot or choose your location manually.':'',link:null};
+ }
+ if(kind==='dest'&&nav.dest){
+  const d=nav.dest,b=byId(d.buildingId);
+  return{x:d.x,y:d.y,title:d.title,sub:d.sub,cls:'',chip:'Destination',svg:pinSvg('#c2410c',GLYPH_DEST),warn:'',link:'admin/floor-layout.php?building_id='+encodeURIComponent(b.id)+'&floor='+encodeURIComponent(d.floorNo||1)};
+ }
+ return null;
+}
+function upsertPin(kind){
+ const d=pinInfo(kind);let p=pinEls[kind];
+ if(!d){if(p){p.remove();delete pinEls[kind]}return}
+ if(!p){
+  p=el('div','pin '+kind);p.tabIndex=0;p.setAttribute('role','button');
+  p.addEventListener('click',ev=>{ev.stopPropagation();if(ev.target.closest('a'))return;togglePin(kind)});
+  p.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();togglePin(kind)}});
+  pinLayer.appendChild(p);pinEls[kind]=p;
+ }
+ const wasOpen=p.classList.contains('open');
+ p.className='pin '+kind+(d.cls?' '+d.cls:'')+(wasOpen?' open':'');
+ p.style.left=d.x+'px';p.style.top=d.y+'px';p._x=d.x;p._y=d.y;
+ p.setAttribute('aria-label',d.title+'. '+d.sub);
+ const art=el('span','pin-art');art.innerHTML=d.svg;
+ const chip=el('span','pin-chip',d.chip);
+ const tip=el('div','pin-tip');tip.appendChild(el('b','',d.title));tip.appendChild(el('small','',d.sub));
+ if(d.warn)tip.appendChild(el('div','tip-warn',d.warn));
+ if(d.link){const a=el('a','','Open floor layout');a.href=d.link;tip.appendChild(a)}
+ p.replaceChildren(art,chip,tip);
+ placeTip(p);
+}
+function placeTip(p){
+ const tip=p.querySelector('.pin-tip');if(!tip)return;
+ const sx=view.x+p._x*view.s,sy=view.y+p._y*view.s,w=mapScroll.clientWidth;
+ tip.classList.toggle('below',sy<170);tip.classList.toggle('al-left',sx<140);tip.classList.toggle('al-right',sx>w-140);
+}
+function refreshTips(){Object.values(pinEls).forEach(p=>{if(p.classList.contains('open'))placeTip(p)})}
+function closePinTips(){Object.values(pinEls).forEach(p=>p.classList.remove('open'))}
+function togglePin(kind){const p=pinEls[kind];if(!p)return;const open=!p.classList.contains('open');closePinTips();if(open){p.classList.add('open');placeTip(p)}}
+/* If both pins land on (almost) the same spot, nudge them apart so both stay visible */
+function updateNear(){const a=pinEls.start,b=pinEls.dest;const near=!!(a&&b&&Math.hypot(a._x-b._x,a._y-b._y)*view.s<26);[a,b].forEach(p=>{if(p)p.classList.toggle('near',near)})}
+function drawRing(){
+ const s=nav.start,sc=geoScale();
+ if(!s||s.source!=='gps'||!sc||!s.accuracy){if(ring){ring.remove();ring=null}return}
+ if(!ring){ring=el('div','acc-ring');pinLayer.insertBefore(ring,pinLayer.firstChild)}
+ const d=Math.max(10,s.accuracy*sc.pxPerMeter*2);
+ ring.style.left=s.x+'px';ring.style.top=s.y+'px';ring.style.width=d+'px';ring.style.height=d+'px';
+}
+function drawRoute(){
+ const s=nav.start,d=nav.dest;
+ if(!s||!d||Math.hypot(s.x-d.x,s.y-d.y)<1){routeLine.setAttribute('visibility','hidden');return}
+ routeLine.setAttribute('x1',s.x);routeLine.setAttribute('y1',s.y);routeLine.setAttribute('x2',d.x);routeLine.setAttribute('y2',d.y);
+ routeLine.setAttribute('visibility','visible');
+}
+function fitToPins(){
+ const list=[nav.start,nav.dest].filter(Boolean);if(!list.length)return;
+ const vw=mapScroll.clientWidth,vh=mapScroll.clientHeight;
+ const x1=Math.min(...list.map(p=>p.x)),x2=Math.max(...list.map(p=>p.x)),y1=Math.min(...list.map(p=>p.y)),y2=Math.max(...list.map(p=>p.y));
+ const cx=(x1+x2)/2,cy=(y1+y2)/2;let s;
+ if(list.length===1||(x2-x1<4&&y2-y1<4))s=Math.min(MAX_Z,Math.max(initZ,initZ*2.2));
+ else s=Math.min(2.5,Math.max(initZ,Math.min(vw/((x2-x1)+260),vh/((y2-y1)+260))));
+ setView(s,vw/2-cx*s,vh/2-cy*s+18);
+}
+
+/* ---- panel (selects, summary, plan) ---- */
+function syncSelects(){
+ const s=nav.start,custom=document.getElementById('startCustom');
+ if(custom){
+  custom.hidden=!(s&&!s.key);
+  if(s&&!s.key)custom.textContent=s.source==='gps'?'\ud83d\udccd My location (GPS)':'\ud83d\udc46 Spot I chose on the map';
+ }
+ startSelect.value=s?(s.key||'__custom'):'';
+ destSelect.value=nav.dest?nav.dest.key:'';
+}
+function sumRow(kind,title,sub,badge,badgeCls){
+ const r=el('div','nav-row');r.appendChild(el('span','dot '+kind));
+ const m=el('div','nav-row-main');
+ if(title){m.appendChild(el('b','',title));if(sub)m.appendChild(el('small','',sub))}
+ else m.appendChild(el('small','muted',kind==='start'?'Starting point not set yet':'Destination not set yet'));
+ r.appendChild(m);
+ if(badge)r.appendChild(el('span','nav-badge '+badgeCls,badge));
+ return r;
+}
+function renderSummary(){
+ navSummary.replaceChildren();
+ const s=nav.start,d=nav.dest;
+ if(!s&&!d){navSummary.hidden=true;return}
+ navSummary.hidden=false;
+ const card=el('div','nav-card');
+ card.appendChild(sumRow('start',s&&s.title,s&&s.sub,s?(s.source==='gps'?(s.lowAccuracy?'GPS \u00b7 low accuracy':'GPS'):'Manual'):'',s?(s.source==='gps'?(s.lowAccuracy?'low':'gps'):'manual'):''));
+ card.appendChild(sumRow('dest',d&&d.title,d&&d.sub,'',''));
+ let note='';
+ if(s&&d){
+  const sb=byId(s.buildingId),db=byId(d.buildingId);
+  if(s.buildingId&&s.buildingId===d.buildingId){
+   note='Both points are in '+db.name+'. Use its floor layout for indoor directions.';
+  }else{
+   const m=distanceMeters();
+   note=(m!==null?'About '+Math.round(m)+' m in a straight line. ':'')+'The dashed line is only a preview, not a walking route.';
+  }
+  if(navInfo.pointsTable){
+   const n=Number((navInfo.pointsByBuilding||{})[d.buildingId]||0);
+   note+=' '+(n>0?n+' navigation point'+(n===1?'':'s')+' mapped in '+db.name+'.':'No navigation points are mapped yet for '+db.name+'.');
+  }
+ }else if(s){note='Now choose a destination.'}
+ else{note='Now set your starting point: use your location, tap the map, or pick it from the list.'}
+ card.appendChild(el('p','nav-note',note));
+ if(d){
+  const act=el('div','nav-actions');
+  const a=el('a','nav-btn','Open floor layout');a.href='admin/floor-layout.php?building_id='+encodeURIComponent(d.buildingId)+'&floor='+encodeURIComponent(d.floorNo||1);
+  act.appendChild(a);card.appendChild(act);
+ }
+ navSummary.appendChild(card);
+}
+/* Single object the route step will read: start, destination, and which data it can connect to */
+function getPlan(){
+ const s=nav.start,d=nav.dest;
+ return{
+  ready:!!(s&&d),
+  start:s?{source:s.source,label:s.title,x:s.x,y:s.y,buildingId:s.buildingId||null,placeKey:s.key||null,lat:s.lat??null,lng:s.lng??null,accuracyMeters:s.accuracy??null,lowAccuracy:!!s.lowAccuracy}:null,
+  destination:d?{kind:d.kind,placeKey:d.key,label:d.title,buildingId:d.buildingId,floor:d.kind==='Facility'?null:(d.floorNo||1),x:d.x,y:d.y}:null,
+  sameBuilding:!!(s&&d&&s.buildingId&&s.buildingId===d.buildingId),
+  straightLineMeters:distanceMeters(),
+  mapSize:{width:CANVAS_W,height:CANVAS_H},
+  navigationData:navInfo
+ };
+}
+function renderNav(fit){
+ syncSelects();upsertPin('start');upsertPin('dest');drawRing();drawRoute();updateNear();renderSummary();
+ navClear.hidden=!(nav.start||nav.dest);
+ if(fit)fitToPins();
+ document.dispatchEvent(new CustomEvent('cmu:navigation-plan',{detail:getPlan()}));
+}
+window.CMUNav={getPlan,setDestinationByKey:k=>goToPlace(k),clear:clearNav};
+
+/* ---- GPS (real device location; never simulated) ---- */
+function locateMe(){
+ stopPicking();
+ if(!('geolocation' in navigator)){msg('This browser does not support GPS. Please choose your location manually.','warn');return}
+ if(!window.isSecureContext){msg('GPS only works on a secure (https) page. Please choose your location manually.','warn');return}
+ gpsBtn.disabled=true;gpsBtn.textContent='Locating\u2026';msg('Waiting for a GPS fix\u2026');
+ navigator.geolocation.getCurrentPosition(onFix,onGpsError,{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+}
+function gpsDone(){gpsBtn.disabled=false;gpsBtn.textContent='\ud83d\udccd Use my location'}
+function onFix(pos){
+ gpsDone();
+ const c=pos.coords,acc=Math.round(c.accuracy||0);
+ if(!geoCfg){msg('Your device found a GPS position (about \u00b1'+acc+' m), but the campus map has not been calibrated for GPS yet, so it cannot be shown on the map. Please choose your location manually.','warn');return}
+ const g=geoToCanvas(c.latitude,c.longitude);
+ if(g.fx<-.05||g.fx>1.05||g.fy<-.05||g.fy>1.05){msg('Your GPS position is outside the campus map area. If you are on campus, please choose your location manually.','warn');return}
+ if(acc>GPS_MAX_ACCURACY_HARD){msg('GPS accuracy is too low (about \u00b1'+acc+' m) to place you on the map. This is common indoors. Please choose your location manually.','warn');return}
+ const x=clamp(g.x,0,CANVAS_W),y=clamp(g.y,0,CANVAS_H),low=acc>geoCfg.max_accuracy_m,b=buildingAt(x,y);
+ setStart({source:'gps',title:'Your location',sub:'Detected by GPS \u00b7 accuracy about \u00b1'+acc+' m'+(b?' \u00b7 near '+b.name:''),x,y,buildingId:b?b.id:null,lat:c.latitude,lng:c.longitude,accuracy:acc,lowAccuracy:low},true);
+ msg(low?'GPS accuracy is low (about \u00b1'+acc+' m), which is common indoors. Check the pin, or choose your location manually.':'GPS location found (about \u00b1'+acc+' m). If the pin looks wrong, choose your location manually.',low?'warn':'');
+}
+function onGpsError(err){
+ gpsDone();
+ const m={1:'Location permission was denied. Allow location access in your browser, or choose your location manually.',2:'Your location is unavailable right now (common indoors). Please choose your location manually.',3:'Finding your location timed out. Try again, or choose your location manually.'};
+ msg(m[err&&err.code]||'Could not get your location. Please choose it manually.','warn');
+}
+
+/* ---- manual: tap the map ---- */
+function startPicking(){
+ if(nav.picking){stopPicking();return}
+ nav.picking=true;hideInfo();closePinTips();
+ pickBtn.classList.add('on');pickBtn.textContent='\ud83d\udc46 Tap the map\u2026';
+ mapScroll.classList.add('picking');pickBanner.hidden=false;
+ msg('Tap the spot on the map where you are standing.');reveal();
+}
+function stopPicking(){
+ if(!nav.picking)return;
+ nav.picking=false;pickBtn.classList.remove('on');pickBtn.textContent='\ud83d\udc46 Tap on map';
+ mapScroll.classList.remove('picking');pickBanner.hidden=true;
+}
+/* Capture phase: while picking, a tap sets the start instead of selecting a building. Drags are filtered out above. */
+mapScroll.addEventListener('click',e=>{
+ if(!nav.picking)return;
+ e.stopPropagation();e.preventDefault();
+ const r=canvas.getBoundingClientRect(),x=(e.clientX-r.left)/view.s,y=(e.clientY-r.top)/view.s;
+ if(x<0||y<0||x>CANVAS_W||y>CANVAS_H)return;
+ const b=buildingAt(x,y);
+ stopPicking();
+ setStart({source:'manual-map',title:'Your location',sub:'Set manually on the map'+(b?' \u00b7 inside '+b.name:''),x,y,buildingId:b?b.id:null},!!nav.dest);
+ msg('Location set manually. Tap the pin to see its details.');
+},true);
+mapScroll.addEventListener('click',e=>{if(!e.target.closest('.pin'))closePinTips()});
+
+gpsBtn.addEventListener('click',locateMe);
+pickBtn.addEventListener('click',startPicking);
+pickCancel.addEventListener('click',()=>{stopPicking();msg('')});
+navClear.addEventListener('click',clearNav);
+startSelect.addEventListener('change',()=>{const v=startSelect.value;if(v==='__custom')return;stopPicking();if(v==='')setStart(null,false);else setStartPlace(placeByKey.get(v))});
+destSelect.addEventListener('change',()=>{const v=destSelect.value;setDestination(v===''?null:placeByKey.get(v))});
+function initNavigation(){buildPlaces();fillSelects();renderNav(false)}
+
 /* Search buildings, rooms, offices, and facilities — original search behavior */
 const searchInput=document.getElementById('campusSearch'), searchResults=document.getElementById('searchResults'), searchClear=document.getElementById('searchClear');
 const MAX_RESULTS=30, SEARCH_ZOOM_WAIT=1100;
 let searchNavTimer=null;
 function floorNumber(text){const n=parseInt(String(text||''),10);return Number.isFinite(n)&&n>0?n:1}
 function closeResults(){searchResults.classList.remove('open');searchResults.replaceChildren()}
-function makeResultRow(title,meta,onPick,href){const row=el('div','result-row');const main=el('button','result-main');main.type='button';main.appendChild(el('span','result-title',title));main.appendChild(el('span','result-meta',meta));main.addEventListener('click',onPick);row.appendChild(main);if(href){const link=el('a','result-link','View floor');link.href=href;link.addEventListener('click',ev=>{ev.preventDefault();onPick()});row.appendChild(link)}return row}
+function makeResultRow(title,meta,onPick,href,onGo){const row=el('div','result-row');const main=el('button','result-main');main.type='button';main.appendChild(el('span','result-title',title));main.appendChild(el('span','result-meta',meta));main.addEventListener('click',onPick);row.appendChild(main);if(href){const link=el('a','result-link','View floor');link.href=href;link.addEventListener('click',ev=>{ev.preventDefault();onPick()});row.appendChild(link)}if(onGo){const go=el('button','result-link go','Go here');go.type='button';go.addEventListener('click',ev=>{ev.preventDefault();onGo()});row.appendChild(go)}return row}
 function zoomThenOpenFloor(buildingId,floor){const b=byId(buildingId);if(!b||isCampusElement(b))return;clearTimeout(searchNavTimer);closeResults();select(b,true);const node=canvas.querySelector('.building[data-id="'+Number(b.id)+'"]');if(node){node.classList.remove('found');void node.offsetWidth;node.classList.add('found')}searchNavTimer=setTimeout(()=>{location.href='admin/floor-layout.php?building_id='+encodeURIComponent(b.id)+'&floor='+encodeURIComponent(floor||1)},window.matchMedia('(prefers-reduced-motion: reduce)').matches?150:SEARCH_ZOOM_WAIT)}
-function runSearch(){const q=searchInput.value.trim().toLowerCase();searchClear.hidden=q==='';if(!q){closeResults();return}const bMatches=buildings.filter(b=>!isCampusElement(b)&&String(b.name||'').toLowerCase().includes(q));const rMatches=searchRooms.filter(r=>{const b=byId(r.buildingId);return b&&!isCampusElement(b)&&[r.number,r.name,r.type,r.floor,b.name].join(' ').toLowerCase().includes(q)});searchResults.replaceChildren();if(!bMatches.length&&!rMatches.length){searchResults.appendChild(el('div','no-results','No buildings, rooms, offices, or facilities found for “'+searchInput.value.trim()+'”.'));searchResults.classList.add('open');return}if(bMatches.length){searchResults.appendChild(el('div','search-group-title','BUILDINGS'));bMatches.slice(0,MAX_RESULTS).forEach(b=>searchResults.appendChild(makeResultRow(b.name,'Building · '+b.floors+(b.floors===1?' floor':' floors')+' · Zooms in, then opens its floor layout',()=>zoomThenOpenFloor(b.id,1),floorUrl(b))))}if(rMatches.length){searchResults.appendChild(el('div','search-group-title','ROOMS, OFFICES & FACILITIES'));rMatches.slice(0,MAX_RESULTS).forEach(r=>{const b=byId(r.buildingId),f=floorNumber(r.floor),title=r.number!==''?r.number+' — '+r.name:r.name,meta=r.type+' · '+b.name+(r.floor!==''?' · '+r.floor:'');searchResults.appendChild(makeResultRow(title,meta,()=>zoomThenOpenFloor(b.id,f),'admin/floor-layout.php?building_id='+encodeURIComponent(b.id)+'&floor='+encodeURIComponent(f)))})}searchResults.classList.add('open')}
+function runSearch(){const q=searchInput.value.trim().toLowerCase();searchClear.hidden=q==='';if(!q){closeResults();return}const bMatches=buildings.filter(b=>!isCampusElement(b)&&String(b.name||'').toLowerCase().includes(q));const rMatches=searchRooms.filter(r=>{const b=byId(r.buildingId);return b&&!isCampusElement(b)&&[r.number,r.name,r.type,r.floor,b.name].join(' ').toLowerCase().includes(q)});searchResults.replaceChildren();if(!bMatches.length&&!rMatches.length){searchResults.appendChild(el('div','no-results','No buildings, rooms, offices, or facilities found for “'+searchInput.value.trim()+'”.'));searchResults.classList.add('open');return}if(bMatches.length){searchResults.appendChild(el('div','search-group-title','BUILDINGS'));bMatches.slice(0,MAX_RESULTS).forEach(b=>searchResults.appendChild(makeResultRow(b.name,'Building · '+b.floors+(b.floors===1?' floor':' floors')+' · Zooms in, then opens its floor layout',()=>zoomThenOpenFloor(b.id,1),floorUrl(b),()=>goToBuilding(b.id))))}if(rMatches.length){searchResults.appendChild(el('div','search-group-title','ROOMS, OFFICES & FACILITIES'));rMatches.slice(0,MAX_RESULTS).forEach(r=>{const b=byId(r.buildingId),f=floorNumber(r.floor),title=r.number!==''?r.number+' — '+r.name:r.name,meta=r.type+' · '+b.name+(r.floor!==''?' · '+r.floor:'');searchResults.appendChild(makeResultRow(title,meta,()=>zoomThenOpenFloor(b.id,f),'admin/floor-layout.php?building_id='+encodeURIComponent(b.id)+'&floor='+encodeURIComponent(f),()=>goToPlace(placeKeyForRoom(r))))})}searchResults.classList.add('open')}
 searchInput.addEventListener('input',runSearch);searchInput.addEventListener('focus',()=>{if(searchInput.value.trim()!=='')runSearch()});searchInput.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();const first=searchResults.querySelector('.result-main');if(first)first.click()}if(ev.key==='Escape')closeResults()});searchClear.addEventListener('click',()=>{searchInput.value='';searchClear.hidden=true;closeResults();searchInput.focus()});document.addEventListener('click',ev=>{if(!ev.target.closest('.search-panel'))closeResults()});
 function render(){
  canvas.replaceChildren();buildingList.replaceChildren();
@@ -488,9 +1000,10 @@ function render(){
   if(!campusElement){const btn=el('button','building-list-item');btn.type='button';btn.dataset.id=b.id;btn.appendChild(el('div','',b.name));btn.appendChild(el('span','list-status '+sc,statusLabel(b.status)));btn.onclick=()=>handleClick(b);buildingList.appendChild(btn)}
  });
  if(!buildingList.children.length)buildingList.appendChild(el('div','empty-message','Walang clickable buildings na available.'));
+ attachNavLayers();
 }
-canvas.addEventListener('click',e=>{if(e.target===canvas)resetView()});document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideInfo();closeResults()}});
-computeBounds();render();applyFit();window.addEventListener('resize',applyFit);
+canvas.addEventListener('click',e=>{if(e.target===canvas)resetView()});document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideInfo();closeResults();stopPicking();closePinTips()}});
+computeBounds();render();applyFit();initNavigation();window.addEventListener('resize',applyFit);
 /* Search sent from the Home page (campus-map.php?search=...) */
 (function(){const q=(new URLSearchParams(location.search).get('search')||'').trim();if(!q)return;searchInput.value=q;runSearch();const sp=document.querySelector('.search-panel');if(sp)sp.scrollIntoView({block:'start'})})();
 </script>
