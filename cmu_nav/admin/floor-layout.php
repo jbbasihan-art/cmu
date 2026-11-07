@@ -12,34 +12,340 @@ function ordinalFloor($number) {
     return $number . 'th';
 }
 
-function imageFromRow(array $row) {
-    /*
-     * Room and hallway uploads are stored in walk_links as a relative
-     * uploads/room-attachments/... image path.
-     */
-    if (isset($row['walk_links']) && is_scalar($row['walk_links'])) {
-        $walkPath = trim((string)$row['walk_links']);
-        $imagePath = parse_url($walkPath, PHP_URL_PATH) ?: $walkPath;
-        if ($walkPath !== '' && preg_match('/\.(?:jpe?g|png|gif|webp)$/i', $imagePath)) {
-            if (preg_match('#^https?://#i', $walkPath)) {
-                return $walkPath;
+/* ------------------------------------------------------------------
+ * IMAGE HANDLING (database image paths -> working <img> URLs)
+ * Columns used by your tables:
+ *   rooms                -> walk_links / room_image_url / image ...
+ *   offices              -> room_image_url, walk_links, panorama_url
+ *   facilities           -> image, walk_links
+ *   navigation_points    -> image_url, walk_links
+ *   navigation_point_sections -> photo_path
+ * ------------------------------------------------------------------ */
+function imageExtPattern() {
+    return '/\.(?:jpe?g|png|gif|webp|bmp|avif|jfif|svg)$/i';
+}
+
+function looksLikeImagePath($value) {
+    $value = trim((string)$value);
+    if ($value === '') return false;
+    if (preg_match('#^data:image/[a-z0-9.+-]+;base64,#i', $value)) return true;
+    $path = parse_url($value, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') $path = $value;
+    $path = str_replace('\\', '/', $path);
+    return (bool)preg_match(imageExtPattern(), $path);
+}
+
+/* Some columns hold a JSON list, a PostgreSQL array ({a.jpg,b.jpg}) or "a.jpg, b.jpg": use the first image. */
+function firstImageValue($raw) {
+    $value = trim((string)$raw);
+    if ($value === '') return '';
+    if ($value[0] === '[' || $value[0] === '{') {
+        $decoded = json_decode($value, true);
+        $found = '';
+        if (is_array($decoded)) {
+            array_walk_recursive($decoded, function ($v) use (&$found) {
+                if ($found === '' && is_string($v) && trim($v) !== '') $found = trim($v);
+            });
+        }
+        if ($found !== '') return $found;
+        // PostgreSQL text[] arrive as {a.jpg,b.jpg}
+        if ($value[0] === '{' && substr($value, -1) === '}') {
+            $inner = trim(substr($value, 1, -1));
+            if ($inner !== '') {
+                $parts = str_getcsv($inner, ',', '"', '\\');
+                $first = trim((string)($parts[0] ?? ''), "\" \t");
+                if ($first !== '') return $first;
             }
-            if (str_starts_with($walkPath, '/') ||
-                str_starts_with($walkPath, './') ||
-                str_starts_with($walkPath, '../')) {
-                return $walkPath;
+        }
+    }
+    if (!preg_match('#^data:#i', $value) &&
+        preg_match('/^([^,;|]+\.(?:jpe?g|png|gif|webp|bmp|avif|jfif|svg))\s*[,;|]/i', $value, $m)) {
+        return trim($m[1]);
+    }
+    return $value;
+}
+
+/*
+ * Case-insensitive file lookup. Paths saved on Windows/XAMPP ("Uploads/IMG_01.JPG")
+ * still resolve on a Linux server, where file names are case-sensitive.
+ * Returns the real absolute path, or null.
+ */
+function findFileInsensitive($baseDir, $relative) {
+    $root = str_replace('\\', '/', dirname(__DIR__));
+    $current = str_replace('\\', '/', $baseDir);
+    foreach (explode('/', $relative) as $part) {
+        if ($part === '' || $part === '.') continue;
+        if ($part === '..') { $current = str_replace('\\', '/', dirname($current)); continue; }
+        if (file_exists($current . '/' . $part)) { $current .= '/' . $part; continue; }
+        $list = @scandir($current);
+        if ($list === false) return null;
+        $matched = false;
+        foreach ($list as $entry) {
+            if (strcasecmp($entry, $part) === 0) {
+                $current .= '/' . $entry;
+                $matched = true;
+                break;
             }
-            if (preg_match(
-                '#^uploads/room-attachments/[a-f0-9]{32}\.(?:jpe?g|png|gif|webp)$#i',
-                str_replace('\\', '/', $walkPath)
-            )) {
-                return '../' . ltrim(str_replace('\\', '/', $walkPath), '/');
+        }
+        if (!$matched) return null;
+    }
+    if (strpos($current, $root . '/') !== 0) return null; // never leave the application folder
+    return is_file($current) ? $current : null;
+}
+
+/* Turns a real file path back into a URL relative to admin/floor-layout.php. */
+function urlFromAbsolute($abs) {
+    $abs = str_replace('\\', '/', $abs);
+    $admin = str_replace('\\', '/', __DIR__);
+    $root = str_replace('\\', '/', dirname(__DIR__));
+    if (strpos($abs, $admin . '/') === 0) return substr($abs, strlen($admin) + 1);
+    if (strpos($abs, $root . '/') === 0) return '../' . substr($abs, strlen($root) + 1);
+    return null;
+}
+
+/* Encodes each part of a relative path ("../uploads/room-attachments/ICE 102.jpeg") for use in an <img src>. */
+function encodeUrlPath($path) {
+    $segments = explode('/', (string)$path);
+    foreach ($segments as &$segment) {
+        if ($segment !== '' && $segment !== '.' && $segment !== '..') {
+            $segment = rawurlencode($segment);
+        }
+    }
+    unset($segment);
+    return implode('/', $segments);
+}
+
+/* True when an image URL points to a file that really exists (web URLs and data: images count as existing). */
+function imageUrlExists($url) {
+    $url = (string)$url;
+    if ($url === '') return false;
+    if (preg_match('#^(?:data:|https?:|//)#i', $url)) return true;
+    $path = preg_replace('/[?#].*$/', '', rawurldecode($url));
+    return is_file(__DIR__ . '/' . $path);
+}
+
+/* "ICE 102", "room105", "Uni Council" -> ['ice','102'], ['room','105'], ['uni','council'] */
+function nameTokens($text) {
+    $s = strtolower((string)$text);
+    $s = preg_replace('/([a-z])(\d)/', '$1 $2', $s);
+    $s = preg_replace('/(\d)([a-z])/', '$1 $2', $s);
+    $s = preg_replace('/[^a-z0-9]+/', ' ', $s);
+    $stop = ['the', 'of', 'and', 'a', 'an'];
+    return array_values(array_filter(explode(' ', trim($s)), function ($t) use ($stop) {
+        return $t !== '' && !in_array($t, $stop, true);
+    }));
+}
+
+/*
+ * Every picture in the uploads/room-attachments folder (also checks "upload/" and admin/uploads/).
+ * Files named after the room (admission.jpg, ICE 102.jpeg, room 103.jpeg ...) are matched by name;
+ * files with a generated name (09585b31...) are matched by the name saved in the database.
+ */
+function attachmentIndex() {
+    static $index = null;
+    if ($index !== null) return $index;
+    $index = [];
+    $folders = [
+        [dirname(__DIR__) . '/uploads/room-attachments', '../uploads/room-attachments'],
+        [dirname(__DIR__) . '/upload/room-attachments', '../upload/room-attachments'],
+        [__DIR__ . '/uploads/room-attachments', 'uploads/room-attachments'],
+        [__DIR__ . '/upload/room-attachments', 'upload/room-attachments']
+    ];
+    foreach ($folders as $folder) {
+        $abs = $folder[0];
+        $rel = $folder[1];
+        if (!is_dir($abs)) continue;
+        $files = @scandir($abs);
+        if ($files === false) continue;
+        foreach ($files as $file) {
+            if ($file === '.' || $file === '..' || !is_file($abs . '/' . $file)) continue;
+            $isHash = (bool)preg_match('/^[a-f0-9]{16,}$/i', pathinfo($file, PATHINFO_FILENAME));
+            if (!preg_match(imageExtPattern(), $file) && !($isHash && strpos($file, '.') === false)) continue;
+            $stem = pathinfo($file, PATHINFO_FILENAME);
+            $index[] = [
+                'path' => $rel . '/' . $file,
+                'stem' => strtolower($stem),
+                'tokens' => $isHash ? [] : nameTokens($stem)
+            ];
+        }
+    }
+    return $index;
+}
+
+/* A database value like "09585b31...5e24" (with or without an extension) -> the real file in the folder. */
+function findAttachmentByStem($name) {
+    $stem = strtolower(pathinfo((string)$name, PATHINFO_FILENAME));
+    if ($stem === '') return null;
+    foreach (attachmentIndex() as $file) {
+        if ($file['stem'] === $stem) return $file['path'];
+    }
+    return null;
+}
+
+/* Finds the uploaded picture whose file name describes this room / office / facility. */
+function findAttachmentForItem($category, $number, $name) {
+    $itemTokens = array_merge(nameTokens($number), nameTokens($name));
+    if ($category === 'Room') $itemTokens[] = 'room';
+    elseif ($category === 'Offices') $itemTokens[] = 'office';
+    elseif ($category === 'Hallway') $itemTokens[] = 'hallway';
+    if (!$itemTokens) return null;
+
+    $best = null;
+    $bestScore = 0;
+    foreach (attachmentIndex() as $file) {
+        $fileTokens = $file['tokens'];
+        if (!$fileTokens) continue;
+        $allMatch = true;
+        foreach ($fileTokens as $token) {
+            $hit = false;
+            foreach ($itemTokens as $itemToken) {
+                if ($itemToken === $token ||
+                    (!ctype_digit($token) && strlen($token) >= 3 && strpos($itemToken, $token) === 0)) {
+                    $hit = true;
+                    break;
+                }
+            }
+            if (!$hit) { $allMatch = false; break; }
+        }
+        if (!$allMatch) continue;
+        // More matching words = more specific file; fewer unused words in the item name = closer match.
+        $score = count($fileTokens) * 10 - max(0, count($itemTokens) - count($fileTokens));
+        if ($score > $bestScore) {
+            $bestScore = $score;
+            $best = $file['path'];
+        }
+    }
+    return $best;
+}
+
+/*
+ * Turns the path saved in the database into a URL that works from
+ * admin/floor-layout.php. It checks the real files on the server, so these
+ * all work: "uploads/x.jpg", "/uploads/x.jpg", "../uploads/x.jpg",
+ * "admin/uploads/x.jpg", "uploads\x.jpg", a bare "x.jpg" (searched inside
+ * the uploads folders), and full server paths. Letter case is ignored.
+ */
+function resolveImageUrl($raw) {
+    $value = firstImageValue($raw);
+    if ($value === '') return '';
+    if (preg_match('#^data:image/[a-z0-9.+-]+;base64,#i', $value)) return $value;
+    if (preg_match('#^(?:https?:)?//#i', $value)) return $value;
+
+    $path = str_replace('\\', '/', $value);
+    $path = preg_replace('/[?#].*$/', '', $path);
+    $path = rawurldecode($path);
+
+    $isRelativeDot = (bool)preg_match('#^\.{1,2}/#', $path);
+    $tail = '';
+    $candidates = [];
+    $base = basename($path);
+
+    if ($isRelativeDot) {
+        $candidates[] = $path;
+    } else {
+        $clean = ltrim($path, '/');
+        if (preg_match('#(?:^|/)(uploads/.+)$#i', $path, $m)) $tail = $m[1];
+        $candidates[] = '../' . $clean;   // app root (normal case)
+        $candidates[] = $clean;           // inside admin/
+        if ($tail !== '') {
+            $candidates[] = '../' . $tail;
+            $candidates[] = $tail;
+        }
+    }
+    // Only a filename (or a wrong folder) saved: look in the usual upload folders.
+    if ($base !== '') {
+        foreach (['uploads/room-attachments/', 'uploads/offices/', 'uploads/facilities/', 'uploads/rooms/', 'uploads/'] as $dir) {
+            $candidates[] = '../' . $dir . $base;
+            $candidates[] = $dir . $base;
+        }
+    }
+
+    $chosen = null;
+    foreach ($candidates as $candidate) {
+        if (is_file(__DIR__ . '/' . $candidate)) {
+            $chosen = $candidate;
+            break;
+        }
+    }
+
+    // Same candidates again, ignoring upper/lower case in folder and file names.
+    if ($chosen === null) {
+        foreach ($candidates as $candidate) {
+            $abs = findFileInsensitive(__DIR__, $candidate);
+            if ($abs !== null) {
+                $url = urlFromAbsolute($abs);
+                if ($url !== null) {
+                    $chosen = $url;
+                    break;
+                }
             }
         }
     }
 
+    // Last resort: any sub-folder of uploads that contains this filename.
+    if ($chosen === null && $base !== '') {
+        $pattern = addcslashes($base, '*?[]');
+        $hit = glob(dirname(__DIR__) . '/uploads/*/' . $pattern);
+        if ($hit && is_file($hit[0])) {
+            $chosen = '../uploads/' . basename(dirname($hit[0])) . '/' . $base;
+        } else {
+            $hit = glob(__DIR__ . '/uploads/*/' . $pattern);
+            if ($hit && is_file($hit[0])) {
+                $chosen = 'uploads/' . basename(dirname($hit[0])) . '/' . $base;
+            }
+        }
+    }
+
+    // A generated name saved without (or with a different) extension: find it in uploads/room-attachments.
+    if ($chosen === null && $base !== '') {
+        $byStem = findAttachmentByStem($base);
+        if ($byStem !== null) $chosen = $byStem;
+    }
+
+    if ($chosen === null) {
+        // The file is not on this server (for example uploads were not copied or were wiped on deploy).
+        error_log('Floor layout image not found on disk, using best-guess URL for: ' . $value);
+        // File not found on disk: fall back to the most likely URL.
+        if ($isRelativeDot) {
+            $chosen = $path;
+        } elseif ($tail !== '') {
+            $chosen = '../' . $tail;
+        } elseif (str_starts_with($path, '/')) {
+            $chosen = $path;
+        } elseif (strpos($path, '/') === false) {
+            $chosen = '../uploads/room-attachments/' . $path;
+        } else {
+            $chosen = '../' . ltrim($path, '/');
+        }
+    }
+
+    return encodeUrlPath($chosen);
+}
+
+/*
+ * $primary = the column that holds this element's picture:
+ *   Room -> walk_links, Offices -> room_image_url,
+ *   Facilities -> image, Navigation -> image_url
+ */
+function imageFromRow(array $row, $primary = '') {
+    // 0) The element's own database column always comes first.
+    if ($primary !== '' && isset($row[$primary]) && is_scalar($row[$primary])) {
+        $value = trim((string)$row[$primary]);
+        $isOk = $value !== '' &&
+            (!preg_match('/^[a-z][a-z0-9+.-]+:/i', $value) ||
+             preg_match('#^(?:data:image/|https?://)#i', $value));
+        if ($isOk) return resolveImageUrl($value);
+    }
+
+    // 1) Uploads saved in walk_links.
+    if (isset($row['walk_links']) && is_scalar($row['walk_links']) &&
+        looksLikeImagePath(firstImageValue($row['walk_links']))) {
+        return resolveImageUrl($row['walk_links']);
+    }
+
+    // 2) Other known image columns.
     $imageColumns = [
-        'room_image', 'room_image_url', 'room_image_path',
+        'room_image_url', 'room_image', 'room_image_path',
         'office_image', 'office_image_url', 'office_image_path',
         'facility_image', 'facility_image_url', 'facility_image_path',
         'navigation_image', 'navigation_image_url', 'navigation_image_path',
@@ -54,18 +360,21 @@ function imageFromRow(array $row) {
         if (!isset($row[$column]) || !is_scalar($row[$column])) continue;
         $value = trim((string)$row[$column]);
         if ($value === '') continue;
+        if (preg_match('/^[a-z][a-z0-9+.-]+:/i', $value) &&
+            !preg_match('#^(?:data:image/|https?://)#i', $value)) continue;
+        return resolveImageUrl($value);
+    }
 
-        if (preg_match('#^data:image/(?:png|jpe?g|gif|webp);base64,#i', $value)) {
-            return $value;
-        }
-        if (preg_match('#^https?://#i', $value) || str_starts_with($value, '/') ||
-            str_starts_with($value, './') || str_starts_with($value, '../')) {
-            return $value;
-        }
-        if (preg_match('/^[a-z][a-z0-9+.-]*:/i', $value)) continue;
-
-        // Uploaded image paths are commonly stored relative to the app root.
-        return '../' . ltrim(str_replace('\\', '/', $value), '/');
+    // 3) Any other column that holds an image file path (for example panorama_url).
+    foreach ($row as $key => $value) {
+        if (!is_scalar($value) || is_bool($value)) continue;
+        $text = firstImageValue($value);
+        if ($text === '') continue;
+        $isData = (bool)preg_match('#^data:image/[a-z0-9.+-]+;base64,#i', $text);
+        if (!$isData && strlen($text) > 500) continue;
+        if (!$isData && preg_match('/^[a-z][a-z0-9+.-]+:/i', $text) &&
+            !preg_match('#^https?://#i', $text)) continue;
+        if ($isData || looksLikeImagePath($text)) return resolveImageUrl($text);
     }
 
     return '';
@@ -77,7 +386,8 @@ function visibleDetails(array $row) {
         'building_id', 'floor', 'floor_number',
         'room_number', 'room_name', 'office_name', 'facility_name', 'location_name',
         'position_x', 'position_y', 'width', 'height', 'shape_type', 'rotation',
-        'walk_links', 'location_type', 'created_at', 'updated_at', 'deleted_at'
+        'walk_links', 'location_type', 'created_at', 'updated_at', 'deleted_at',
+        'room_image_url', 'image_url', 'panorama_url'
     ];
     $details = [];
 
@@ -92,6 +402,8 @@ function visibleDetails(array $row) {
 
         $text = trim((string)$value);
         if ($text === '' || strlen($text) > 500) continue;
+        // Image paths are shown as the picture itself, not as a text row.
+        if (looksLikeImagePath($text)) continue;
 
         $label = ucwords(str_replace('_', ' ', $key));
         $details[$label] = $text;
@@ -101,6 +413,25 @@ function visibleDetails(array $row) {
 }
 
 function makeLayoutItem(array $row, $category, $idColumn, $numberColumn, $nameColumn, $floorColumn) {
+    $primaryColumn = ['Room' => 'walk_links', 'Offices' => 'room_image_url', 'Facilities' => 'image', 'Navigation' => 'image_url'][$category] ?? '';
+    $image = imageFromRow($row, $primaryColumn);
+
+    // Pictures uploaded straight into uploads/room-attachments: use the one that matches this item's
+    // name or number whenever the database has no usable image path (empty, or the file does not exist).
+    $hasSectionPhoto = false;
+    foreach ((is_array($row['_sections'] ?? null) ? $row['_sections'] : []) as $sectionEntry) {
+        if (!empty($sectionEntry['image'])) { $hasSectionPhoto = true; break; }
+    }
+    if (!$hasSectionPhoto && ($image === '' || !imageUrlExists($image))) {
+        $isHallwayRow = $category === 'Navigation' && strcasecmp((string)($row['location_type'] ?? ''), 'Hallway') === 0;
+        $match = findAttachmentForItem(
+            $isHallwayRow ? 'Hallway' : $category,
+            (string)($numberColumn ? ($row[$numberColumn] ?? '') : ''),
+            (string)($row[$nameColumn] ?? '')
+        );
+        if ($match !== null) $image = encodeUrlPath($match);
+    }
+
     return [
         'category' => $category,
         'item_id' => (int)($row[$idColumn] ?? 0),
@@ -117,7 +448,7 @@ function makeLayoutItem(array $row, $category, $idColumn, $numberColumn, $nameCo
         'staircase_type' => (string)($row['staircase_type'] ?? ''),
         'sections' => is_array($row['_sections'] ?? null) ? $row['_sections'] : [],
         'walk_links' => is_scalar($row['walk_links'] ?? null) ? (string)$row['walk_links'] : '',
-        'image' => imageFromRow($row),
+        'image' => $image,
         'details' => visibleDetails($row)
     ];
 }
@@ -243,21 +574,20 @@ $navigationIds = array_values(array_filter(array_map(
 $sectionsByNavigationId = [];
 if ($navigationIds) {
     try {
-        $sectionStmt = $conn->prepare(
-            'SELECT navigation_point_id, section_number, section_name, photo_path, marker_x, marker_y
-             FROM navigation_point_sections
-             WHERE navigation_point_id = ANY(CAST(:navigation_ids AS BIGINT[]))
-             ORDER BY navigation_point_id, section_number'
-        );
-        $sectionStmt->execute(['navigation_ids' => '{' . implode(',', $navigationIds) . '}']);
+        // Use portable PDO placeholders (MySQL/XAMPP compatible).
+        // The previous PostgreSQL-only ANY(CAST(... AS BIGINT[])) query fails on MySQL,
+        // which prevents every photo in navigation_point_sections from loading.
+        $sectionPlaceholders = implode(',', array_fill(0, count($navigationIds), '?'));
+        $sectionSql = 'SELECT *
+                       FROM navigation_point_sections
+                       WHERE navigation_point_id IN (' . $sectionPlaceholders . ')
+                       ORDER BY navigation_point_id, section_number';
+        $sectionStmt = $conn->prepare($sectionSql);
+        $sectionStmt->execute($navigationIds);
         foreach ($sectionStmt->fetchAll(PDO::FETCH_ASSOC) as $sectionRow) {
-            $path = trim((string)($sectionRow['photo_path'] ?? ''));
-            if ($path !== '' && !preg_match('#^https?://#i', $path) &&
-                !str_starts_with($path, '/') && !str_starts_with($path, './') &&
-                !str_starts_with($path, '../')) {
-                $path = '../' . ltrim(str_replace('\\', '/', $path), '/');
-            }
-            $sectionRow['image'] = $path;
+            $image = resolveImageUrl($sectionRow['photo_path'] ?? '');
+            if ($image === '') $image = imageFromRow($sectionRow);
+            $sectionRow['image'] = $image;
             $id = (int)$sectionRow['navigation_point_id'];
             $sectionsByNavigationId[$id][] = $sectionRow;
         }
@@ -270,6 +600,33 @@ foreach ($navigationRows as $row) {
     $row['floor'] = $row['floor_number'] ?? $floorNumber;
     $row['shape_type'] = 'rectangle';
     $row['_sections'] = $sectionsByNavigationId[(int)$row['navigation_point_id']] ?? [];
+
+    // A picture uploaded to upload/room-attachments (or uploads/room-attachments) and named after the hallway (e.g. "Hallway 2.jpeg")
+    // is added to this hallway's "Hallway Areas" list, next to any area photos saved in the database.
+    $hallwayName = trim((string)($row['location_name'] ?? ''));
+    if (strcasecmp((string)($row['location_type'] ?? ''), 'Hallway') === 0 || preg_match('/hallway/i', $hallwayName)) {
+        $hallwayFile = findAttachmentForItem('Hallway', '', $hallwayName);
+        if ($hallwayFile !== null) {
+            $fileKey = strtolower(basename($hallwayFile));
+            $alreadyListed = false;
+            $maxSectionNumber = 0;
+            foreach ($row['_sections'] as $existingSection) {
+                $maxSectionNumber = max($maxSectionNumber, (int)($existingSection['section_number'] ?? 0));
+                if (strtolower(basename(rawurldecode((string)($existingSection['image'] ?? '')))) === $fileKey) {
+                    $alreadyListed = true;
+                }
+            }
+            if (!$alreadyListed) {
+                // No marker_x / marker_y on purpose: it is listed after the areas that have saved positions.
+                $row['_sections'][] = [
+                    'navigation_point_id' => (int)($row['navigation_point_id'] ?? 0),
+                    'section_number' => $maxSectionNumber + 1,
+                    'section_name' => $hallwayName !== '' ? $hallwayName : 'Hallway',
+                    'image' => encodeUrlPath($hallwayFile)
+                ];
+            }
+        }
+    }
     if (strcasecmp((string)($row['location_type'] ?? ''), 'Hallway') === 0 &&
         !empty($row['_sections'])) {
         foreach ($row['_sections'] as $section) {
@@ -279,7 +636,7 @@ foreach ($navigationRows as $row) {
             }
         }
     }
-    $items[] = makeLayoutItem(
+    $navItem = makeLayoutItem(
         $row,
         'Navigation',
         'navigation_point_id',
@@ -287,6 +644,16 @@ foreach ($navigationRows as $row) {
         'location_name',
         'floor'
     );
+    // Navigation points without their own image_url use their first section photo.
+    if ($navItem['image'] === '') {
+        foreach ($row['_sections'] as $section) {
+            if (!empty($section['image'])) {
+                $navItem['image'] = $section['image'];
+                break;
+            }
+        }
+    }
+    $items[] = $navItem;
 }
 
 // Guard against duplicate rows returned by a source table while preserving
@@ -1082,11 +1449,15 @@ function showItem(button, event) {
     if (photoEmptyState) photoEmptyState.hidden = true;
     if (hallwaySelected) imagePlaceholder.hidden = true;
     detailImage.onerror = function() {
+        // The browser could not load this URL: the file is missing on the server or the path is wrong.
+        console.warn('[Floor layout] Image failed to load:', detailImage.getAttribute('src'), 'for', item.category, item.item_name);
         imageViewer.hidden = true;
         imagePlaceholder.hidden = false;
         if (detailImageLink) { detailImageLink.hidden = true; detailImageLink.disabled = true; }
     };
-    if (item.image && !hallwaySelected) {
+    // A hallway with area photos uses the gallery; a hallway with only one picture (e.g. "hallway 2.jpeg") shows that picture.
+    const hallwayHasAreaPhotos = hallwaySelected && (item.sections || []).some(part => part && part.image);
+    if (item.image && !hallwayHasAreaPhotos) {
         activeHallwaySections = [];
         activeHallwayIndex = -1;
         detailImage.onload = function() {
